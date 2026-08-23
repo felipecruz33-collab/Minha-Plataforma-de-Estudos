@@ -8,6 +8,14 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Registro manual em src/main.tsx (para forçar checagem por nova versão
+      // sempre que o app volta ao primeiro plano — ver comentário lá).
+      injectRegister: false,
+      workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
+      },
       includeAssets: ['icons/icon-192.svg', 'icons/icon-512.svg'],
       manifest: {
         name: 'Minha Plataforma de Estudos',
