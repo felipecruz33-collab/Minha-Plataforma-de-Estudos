@@ -25,8 +25,8 @@ permanentemente à minha biblioteca; nada existente é apagado.
 2. Você lê o PDF **inteiro** (sem pular páginas, sem resumir de forma rasa) e gera um `.json`
    no formato fixo abaixo.
 3. Entregue o `.json` **como arquivo para download** quando a ferramenta permitir (ex.: Code
-   Interpreter/Canvas); se não puder gerar arquivo, responda com o JSON dentro de um único
-   bloco de código \`\`\`json, sem nenhum texto antes ou depois dele.
+   Interpreter/Canvas); se não puder gerar arquivo, responda só com o JSON num bloco de
+   código, sem nenhum texto antes ou depois dele.
 4. Feche com um resumo curto: quantos blocos e quantas questões o arquivo contém.
 5. Se o PDF for muito grande ou cobrir mais de uma aula, gere **um `.json` por aula**, nunca
    tudo misturado num arquivo só.
