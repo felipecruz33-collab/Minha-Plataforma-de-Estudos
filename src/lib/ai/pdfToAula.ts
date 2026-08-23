@@ -24,7 +24,7 @@ async function extractText(file: File): Promise<string[]> {
  * por `validateAulaImport` no ImportPanel, igual a qualquer importação de
  * .json — a IA pode errar, a validação é quem decide se entra na biblioteca.
  */
-export async function gerarAulaViaIA(file: File, materiaOverride?: string): Promise<AulaImportPayload> {
+export async function gerarAulaViaIA(file: File, materiaOverride?: string, chaveUsuario?: string | null): Promise<AulaImportPayload> {
   const paginas = await extractText(file)
   const texto = paginas.join('\n\n').trim()
 
@@ -37,7 +37,7 @@ export async function gerarAulaViaIA(file: File, materiaOverride?: string): Prom
     resposta = await fetch('/api/gerar-aula', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texto, materiaOverride, nomeArquivo: file.name }),
+      body: JSON.stringify({ texto, materiaOverride, nomeArquivo: file.name, chaveUsuario: chaveUsuario || undefined }),
     })
   } catch {
     throw new Error(

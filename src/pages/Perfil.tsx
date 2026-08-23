@@ -1,4 +1,4 @@
-import { Check, Crown, Shield } from 'lucide-react'
+import { Check, Crown, Eye, EyeOff, KeyRound, Shield } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
@@ -6,10 +6,15 @@ import { useAuth } from '../lib/auth/AuthContext'
 import { usingSupabase } from '../lib/repo'
 
 export default function Perfil() {
-  const { perfil, atualizarNome } = useAuth()
+  const { perfil, atualizarNome, salvarChaveGemini } = useAuth()
   const [nome, setNome] = useState(perfil?.nome ?? '')
   const [salvando, setSalvando] = useState(false)
   const [salvo, setSalvo] = useState(false)
+
+  const [chave, setChave] = useState(perfil?.chaveGemini ?? '')
+  const [mostrarChave, setMostrarChave] = useState(false)
+  const [salvandoChave, setSalvandoChave] = useState(false)
+  const [chaveSalva, setChaveSalva] = useState(false)
 
   if (!perfil) return null
 
@@ -22,6 +27,18 @@ export default function Perfil() {
       setSalvo(true)
     } finally {
       setSalvando(false)
+    }
+  }
+
+  async function salvarChave(e: React.FormEvent) {
+    e.preventDefault()
+    setSalvandoChave(true)
+    setChaveSalva(false)
+    try {
+      await salvarChaveGemini(chave.trim() || null)
+      setChaveSalva(true)
+    } finally {
+      setSalvandoChave(false)
     }
   }
 
@@ -73,6 +90,64 @@ export default function Perfil() {
                 Salvo
               </>
             ) : salvando ? (
+              'Salvando…'
+            ) : (
+              'Salvar'
+            )}
+          </Button>
+        </form>
+      </Card>
+
+      <Card className="mt-4">
+        <div className="mb-2 flex items-center gap-2">
+          <KeyRound className="h-4 w-4 text-brand-blue" strokeWidth={1.75} />
+          <h2 className="font-semibold text-navy">Sua chave de IA (Gemini)</h2>
+        </div>
+        <p className="mb-3 text-sm text-slate-500">
+          Opcional. O "PDF com IA" usa uma chave compartilhada por padrão, que pode ficar sobrecarregada em
+          horários de pico. Colocando sua própria chave gratuita aqui, você passa a ter sua própria cota — sem
+          fila com outros usuários. Leva uns 2 minutos: acesse{' '}
+          <a
+            href="https://aistudio.google.com/apikey"
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-brand-blue hover:underline"
+          >
+            aistudio.google.com/apikey
+          </a>
+          , faça login com uma conta Google e clique em "Create API key" (grátis, sem cartão).
+        </p>
+        <form onSubmit={salvarChave} className="flex items-end gap-2">
+          <label className="block min-w-0 flex-1 text-sm">
+            <span className="mb-1 block font-medium text-slate-600">Chave</span>
+            <div className="relative">
+              <input
+                type={mostrarChave ? 'text' : 'password'}
+                value={chave}
+                onChange={(e) => {
+                  setChave(e.target.value)
+                  setChaveSalva(false)
+                }}
+                placeholder="AIza..."
+                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 pr-10 text-sm outline-none focus:border-brand-blue"
+              />
+              <button
+                type="button"
+                onClick={() => setMostrarChave((v) => !v)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-400 hover:text-slate-600"
+                aria-label={mostrarChave ? 'Esconder chave' : 'Mostrar chave'}
+              >
+                {mostrarChave ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
+              </button>
+            </div>
+          </label>
+          <Button type="submit" variant="secondary" disabled={salvandoChave} className="shrink-0">
+            {chaveSalva ? (
+              <>
+                <Check className="h-4 w-4" strokeWidth={2} />
+                Salva
+              </>
+            ) : salvandoChave ? (
               'Salvando…'
             ) : (
               'Salvar'

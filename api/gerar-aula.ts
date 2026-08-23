@@ -4,7 +4,6 @@ import { SYSTEM_PROMPT_GERAR_AULA } from '../src/lib/aiPrompt.js'
 
 // Texto extraído do PDF vem em base64 do cliente; ~4.4MB é o limite prático
 // de corpo de requisição em funções serverless da Vercel — fica com folga.
-// Também fica bem abaixo da cota de tokens por minuto do tier gratuito do Gemini.
 const MAX_TEXTO_CHARS = 350_000
 
 // Alias que a Google mantém sempre apontando pro Flash mais recente — evita
@@ -98,19 +97,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
-  const apiKey = process.env.GEMINI_API_KEY
-  if (!apiKey) {
-    res.status(500).json({
-      ok: false,
-      error: 'IA não configurada no servidor (falta GEMINI_API_KEY nas variáveis de ambiente do Vercel).',
-    })
-    return
-  }
-
-  const { texto, materiaOverride, nomeArquivo } = (req.body ?? {}) as {
+  const { texto, materiaOverride, nomeArquivo, chaveUsuario } = (req.body ?? {}) as {
     texto?: string
     materiaOverride?: string
     nomeArquivo?: string
+    chaveUsuario?: string
+  }
+
+  // Prioriza a chave própria do usuário (evita fila compartilhada) — cai pra
+  // chave da plataforma configurada na Vercel se ele não tiver a sua.
+  const apiKey = chaveUsuario?.trim() || process.env.GEMINI_API_KEY
+  if (!apiKey) {
+    res.status(500).json({
+      ok: false,
+      error:
+        'IA não configurada. Adicione sua própria chave gratuita do Gemini em "Perfil", ou peça pro administrador configurar GEMINI_API_KEY no servidor.',
+    })
+    return
   }
 
   if (!texto || typeof texto !== 'string' || !texto.trim()) {
@@ -166,14 +169,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (geminiRes.status === 429) {
         res.status(429).json({
           ok: false,
-          error: 'Cota gratuita da IA esgotada por agora (limite do tier gratuito do Gemini). Tente novamente em alguns minutos.',
+          error: chaveUsuario
+            ? 'Cota gratuita da sua chave do Gemini esgotada por agora. Tente novamente em alguns minutos.'
+            : 'Cota gratuita compartilhada esgotada por agora. Adicione sua própria chave grátis em "Perfil" pra não depender dela, ou tente de novo mais tarde.',
         })
         return
       }
       if (geminiRes.status === 503) {
         res.status(503).json({
           ok: false,
-          error: 'O modelo de IA está com alta demanda no Google agora (já tentei de novo automaticamente). Espera alguns minutos e tenta de novo.',
+          error: chaveUsuario
+            ? 'O modelo de IA está com alta demanda no Google agora (já tentei de novo automaticamente). Espera um pouco e tenta de novo.'
+            : 'O modelo de IA está com alta demanda no Google agora, mesmo já tentando de novo automaticamente. Adicionar sua própria chave grátis em "Perfil" costuma resolver, já que ela não compete com a de outros usuários.',
         })
         return
       }
