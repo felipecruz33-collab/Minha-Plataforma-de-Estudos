@@ -88,6 +88,35 @@ export interface Simulado {
   criadoEm: string
 }
 
+export interface ItemCronograma {
+  id: string
+  materiaId: string | null
+  materiaNome: string
+  aulaId: string | null
+  descricao: string
+  concluido: boolean
+}
+
+export interface SemanaCronograma {
+  numero: number
+  inicioEm: string
+  fimEm: string
+  itens: ItemCronograma[]
+}
+
+export interface Cronograma {
+  id: string
+  userId: string
+  nome: string
+  modo: 'automatico' | 'manual'
+  dataInicio: string
+  dataFim: string
+  materias: { materiaId: string; materiaNome: string }[]
+  semanas: SemanaCronograma[]
+  criadoEm: string
+  atualizadoEm: string
+}
+
 export interface GeracaoIA {
   id: string
   userId: string

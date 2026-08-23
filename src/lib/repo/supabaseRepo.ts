@@ -1,5 +1,5 @@
 import { supabase } from '../supabaseClient'
-import type { Aula, AulaImportPayload, Bloco, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
+import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
 import type { BackupData, DataRepository, MateriaComContagem } from './types'
 
 /**
@@ -450,6 +450,62 @@ export class SupabaseRepository implements DataRepository {
 
   async deleteSimulado(simuladoId: string): Promise<void> {
     const { error } = await this.db().from('simulados').delete().eq('id', simuladoId)
+    if (error) throw error
+  }
+
+  async getCronograma(userId: string): Promise<Cronograma | null> {
+    const { data, error } = await this.db().from('cronogramas').select('*').eq('user_id', userId).maybeSingle()
+    if (error) throw error
+    if (!data) return null
+    return {
+      id: data.id,
+      userId: data.user_id,
+      nome: data.nome,
+      modo: data.modo,
+      dataInicio: data.data_inicio,
+      dataFim: data.data_fim,
+      materias: data.materias,
+      semanas: data.semanas,
+      criadoEm: data.criado_em,
+      atualizadoEm: data.atualizado_em,
+    }
+  }
+
+  async upsertCronograma(userId: string, dados: Omit<Cronograma, 'id' | 'userId' | 'criadoEm' | 'atualizadoEm'>): Promise<Cronograma> {
+    const { data, error } = await this.db()
+      .from('cronogramas')
+      .upsert(
+        {
+          user_id: userId,
+          nome: dados.nome,
+          modo: dados.modo,
+          data_inicio: dados.dataInicio,
+          data_fim: dados.dataFim,
+          materias: dados.materias,
+          semanas: dados.semanas,
+          atualizado_em: new Date().toISOString(),
+        },
+        { onConflict: 'user_id' },
+      )
+      .select()
+      .single()
+    if (error) throw error
+    return {
+      id: data.id,
+      userId: data.user_id,
+      nome: data.nome,
+      modo: data.modo,
+      dataInicio: data.data_inicio,
+      dataFim: data.data_fim,
+      materias: data.materias,
+      semanas: data.semanas,
+      criadoEm: data.criado_em,
+      atualizadoEm: data.atualizado_em,
+    }
+  }
+
+  async deleteCronograma(userId: string): Promise<void> {
+    const { error } = await this.db().from('cronogramas').delete().eq('user_id', userId)
     if (error) throw error
   }
 }

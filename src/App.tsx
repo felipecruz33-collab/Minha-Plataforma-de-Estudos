@@ -6,6 +6,7 @@ import AulaDetail from './pages/AulaDetail'
 import Backup from './pages/Backup'
 import Biblioteca from './pages/Biblioteca'
 import Buscar from './pages/Buscar'
+import Cronograma from './pages/Cronograma'
 import Desempenho from './pages/Desempenho'
 import Erradas from './pages/Erradas'
 import Favoritos from './pages/Favoritos'
@@ -51,6 +52,7 @@ function AppRoutes() {
         <Route path="/adicionar" element={<Adicionar />} />
         <Route path="/biblioteca" element={<Biblioteca />} />
         <Route path="/biblioteca/:materiaId" element={<MateriaDetail />} />
+        <Route path="/cronograma" element={<Cronograma />} />
         <Route path="/desempenho" element={<Desempenho />} />
         <Route path="/questoes" element={<Questoes />} />
         <Route path="/simulados" element={<Simulados />} />
