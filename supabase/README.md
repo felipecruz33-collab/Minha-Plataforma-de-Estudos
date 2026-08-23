@@ -16,6 +16,7 @@ desenvolvimento/demonstração sem backend.
    - `migrations/0004_perfil_nome.sql`
    - `migrations/0005_user_roles.sql`
    - `migrations/0006_simulados.sql`
+   - `migrations/0007_cronogramas.sql`
 3. Copie `.env.example` para `.env.local` e preencha:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`

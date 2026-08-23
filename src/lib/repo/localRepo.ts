@@ -1,4 +1,4 @@
-import type { Aula, AulaImportPayload, Bloco, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
+import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
 import type { BackupData, DataRepository, MateriaComContagem } from './types'
 
 const STORAGE_KEY = 'mpe:v1'
@@ -13,10 +13,11 @@ interface Store {
   perfis: Record<string, Perfil>
   geracoes: GeracaoIA[]
   simulados: Simulado[]
+  cronogramas: Record<string, Cronograma>
 }
 
 function emptyStore(): Store {
-  return { materias: [], aulas: [], respostas: [], perfis: {}, geracoes: [], simulados: [] }
+  return { materias: [], aulas: [], respostas: [], perfis: {}, geracoes: [], simulados: [], cronogramas: {} }
 }
 
 function load(): Store {
@@ -301,6 +302,27 @@ export class LocalRepository implements DataRepository {
   async deleteSimulado(simuladoId: string): Promise<void> {
     const s = load()
     s.simulados = s.simulados.filter((sim) => sim.id !== simuladoId)
+    save(s)
+  }
+
+  async getCronograma(userId: string): Promise<Cronograma | null> {
+    const s = load()
+    return s.cronogramas[userId] ?? null
+  }
+
+  async upsertCronograma(userId: string, dados: Omit<Cronograma, 'id' | 'userId' | 'criadoEm' | 'atualizadoEm'>): Promise<Cronograma> {
+    const s = load()
+    const existente = s.cronogramas[userId]
+    const now = new Date().toISOString()
+    const cronograma: Cronograma = { ...dados, id: existente?.id ?? id(), userId, criadoEm: existente?.criadoEm ?? now, atualizadoEm: now }
+    s.cronogramas[userId] = cronograma
+    save(s)
+    return cronograma
+  }
+
+  async deleteCronograma(userId: string): Promise<void> {
+    const s = load()
+    delete s.cronogramas[userId]
     save(s)
   }
 }

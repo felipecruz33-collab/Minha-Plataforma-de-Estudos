@@ -1,4 +1,4 @@
-import type { Aula, AulaImportPayload, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
+import type { Aula, AulaImportPayload, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
 
 export interface MateriaComContagem extends Materia {
   numAulas: number
@@ -60,6 +60,11 @@ export interface DataRepository {
   listSimulados(userId: string): Promise<Simulado[]>
   registrarSimulado(simulado: Omit<Simulado, 'id' | 'criadoEm'>): Promise<Simulado>
   deleteSimulado(simuladoId: string): Promise<void>
+
+  /** Um cronograma por usuário — "upsert" cria se não existir, substitui se já existir. */
+  getCronograma(userId: string): Promise<Cronograma | null>
+  upsertCronograma(userId: string, dados: Omit<Cronograma, 'id' | 'userId' | 'criadoEm' | 'atualizadoEm'>): Promise<Cronograma>
+  deleteCronograma(userId: string): Promise<void>
 }
 
 export function extractQuestoes(aulas: Aula[]): Questao[] {

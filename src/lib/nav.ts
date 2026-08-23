@@ -3,6 +3,7 @@ import {
   BookMarked,
   BookOpenCheck,
   Bot,
+  CalendarDays,
   Crown,
   Download,
   Home,
@@ -22,12 +23,13 @@ export interface NavItem {
   icon: LucideIcon
 }
 
-/** Ordem fixa exigida pela Seção 5 do prompt original. */
+/** Ordem fixa exigida pela Seção 5 do prompt original, com "Cronograma" adicionada depois. */
 export const NAV_ITEMS: NavItem[] = [
   { path: '/', label: 'Início', icon: Home },
   { path: '/buscar', label: 'Buscar', icon: Search },
   { path: '/adicionar', label: 'Adicionar conteúdo', icon: Upload },
   { path: '/biblioteca', label: 'Biblioteca compartilhada', icon: BookMarked },
+  { path: '/cronograma', label: 'Cronograma', icon: CalendarDays },
   { path: '/desempenho', label: 'Desempenho', icon: BarChart3 },
   { path: '/questoes', label: 'Questões', icon: BookOpenCheck },
   { path: '/simulados', label: 'Simulados', icon: ListChecks },
@@ -39,5 +41,5 @@ export const NAV_ITEMS: NavItem[] = [
   { path: '/premium', label: 'Premium', icon: Crown },
 ]
 
-/** 14ª entrada, exclusiva do administrador — não conta como uma das 13 telas fixas. */
+/** Entrada extra, exclusiva do administrador — não faz parte da lista fixa de telas acima. */
 export const ADMIN_NAV_ITEM: NavItem = { path: '/usuarios', label: 'Usuários', icon: Users }
