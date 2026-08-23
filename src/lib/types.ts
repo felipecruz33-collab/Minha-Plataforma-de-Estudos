@@ -83,6 +83,7 @@ export interface GeracaoIA {
 export interface Perfil {
   userId: string
   email: string
+  nome: string
   isAdmin: boolean
   isPremium: boolean
   favoritos: string[]

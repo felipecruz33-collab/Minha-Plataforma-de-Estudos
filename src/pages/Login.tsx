@@ -7,6 +7,7 @@ import { useAuth } from '../lib/auth/AuthContext'
 export default function Login() {
   const { user, signIn, signUp } = useAuth()
   const [modo, setModo] = useState<'entrar' | 'criar'>('entrar')
+  const [nome, setNome] = useState('')
   const [email, setEmail] = useState('')
   const [senha, setSenha] = useState('')
   const [erro, setErro] = useState<string | null>(null)
@@ -20,7 +21,7 @@ export default function Login() {
     setCarregando(true)
     try {
       if (modo === 'entrar') await signIn(email, senha)
-      else await signUp(email, senha)
+      else await signUp(email, senha, nome)
     } catch (err) {
       setErro(err instanceof Error ? err.message : 'Não foi possível continuar.')
     } finally {
@@ -41,6 +42,20 @@ export default function Login() {
       <form onSubmit={onSubmit} className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
         <h1 className="mb-1 text-lg font-bold text-navy">{modo === 'entrar' ? 'Entrar' : 'Criar conta'}</h1>
         <p className="mb-5 text-sm text-slate-500">Login obrigatório para acessar sua biblioteca de estudos.</p>
+
+        {modo === 'criar' && (
+          <label className="mb-3 block text-sm">
+            <span className="mb-1 block font-medium text-slate-600">Nome</span>
+            <input
+              type="text"
+              required
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-blue"
+              autoComplete="name"
+            />
+          </label>
+        )}
 
         <label className="mb-3 block text-sm">
           <span className="mb-1 block font-medium text-slate-600">E-mail</span>

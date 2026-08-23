@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { useAuth } from '../../lib/auth/AuthContext'
 import { Logo } from './Logo'
 import { ADMIN_NAV_ITEM, NAV_ITEMS } from '../../lib/nav'
+import { ProfileCard } from './ProfileCard'
 
 interface SidebarProps {
   open: boolean
@@ -53,6 +54,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
             </NavLink>
           ))}
         </nav>
+        <ProfileCard onNavigate={onClose} />
       </aside>
     </>
   )

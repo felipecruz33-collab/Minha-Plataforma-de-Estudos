@@ -242,9 +242,29 @@ export class SupabaseRepository implements DataRepository {
     const { data, error } = await this.db().from('profiles').select('*').eq('id', userId).maybeSingle()
     if (error) throw error
     if (!data) {
-      return { userId, email, isAdmin: false, isPremium: false, favoritos: [] }
+      return { userId, email, nome: '', isAdmin: false, isPremium: false, favoritos: [] }
     }
-    return { userId: data.id, email: data.email, isAdmin: data.is_admin, isPremium: data.is_premium, favoritos: data.favoritos ?? [] }
+    return {
+      userId: data.id,
+      email: data.email,
+      nome: data.nome ?? '',
+      isAdmin: data.is_admin,
+      isPremium: data.is_premium,
+      favoritos: data.favoritos ?? [],
+    }
+  }
+
+  async atualizarNome(userId: string, nome: string): Promise<Perfil> {
+    const { data, error } = await this.db().from('profiles').update({ nome }).eq('id', userId).select().single()
+    if (error) throw error
+    return {
+      userId: data.id,
+      email: data.email,
+      nome: data.nome ?? '',
+      isAdmin: data.is_admin,
+      isPremium: data.is_premium,
+      favoritos: data.favoritos ?? [],
+    }
   }
 
   async listPerfis(): Promise<Perfil[]> {
@@ -255,6 +275,7 @@ export class SupabaseRepository implements DataRepository {
     return (data ?? []).map((p: any) => ({
       userId: p.id,
       email: p.email,
+      nome: p.nome ?? '',
       isAdmin: p.is_admin,
       isPremium: p.is_premium,
       favoritos: p.favoritos ?? [],
@@ -275,7 +296,14 @@ export class SupabaseRepository implements DataRepository {
       : [...perfil.favoritos, questaoId]
     const { data, error } = await this.db().from('profiles').update({ favoritos }).eq('id', userId).select().single()
     if (error) throw error
-    return { userId: data.id, email: data.email, isAdmin: data.is_admin, isPremium: data.is_premium, favoritos: data.favoritos ?? [] }
+    return {
+      userId: data.id,
+      email: data.email,
+      nome: data.nome ?? '',
+      isAdmin: data.is_admin,
+      isPremium: data.is_premium,
+      favoritos: data.favoritos ?? [],
+    }
   }
 
   async exportBackup(userId: string): Promise<BackupData> {

@@ -45,6 +45,7 @@ export interface DataRepository {
   registrarResposta(resposta: Omit<Resposta, 'id' | 'respondidoEm'>): Promise<Resposta>
 
   getPerfil(userId: string, email: string): Promise<Perfil>
+  atualizarNome(userId: string, nome: string): Promise<Perfil>
   setPremium(userId: string, value: boolean): Promise<void>
   toggleFavorito(userId: string, questaoId: string): Promise<Perfil>
   /** Só retorna dados úteis para o administrador — ver RLS em 0003_admin_lista_usuarios.sql. */

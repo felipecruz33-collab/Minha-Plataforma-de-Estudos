@@ -13,6 +13,7 @@ import Geracoes from './pages/Geracoes'
 import Inicio from './pages/Inicio'
 import Login from './pages/Login'
 import MateriaDetail from './pages/MateriaDetail'
+import Perfil from './pages/Perfil'
 import Premium from './pages/Premium'
 import Questoes from './pages/Questoes'
 import Revisao from './pages/Revisao'
@@ -60,6 +61,7 @@ function AppRoutes() {
         <Route path="/geracoes" element={<Geracoes />} />
         <Route path="/premium" element={<Premium />} />
         <Route path="/usuarios" element={<Usuarios />} />
+        <Route path="/perfil" element={<Perfil />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
