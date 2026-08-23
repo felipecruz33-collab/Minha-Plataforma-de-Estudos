@@ -186,13 +186,21 @@ export class LocalRepository implements DataRepository {
     const deveSerAdmin = email.toLowerCase() === adminEmail
 
     if (!s.perfis[userId]) {
-      s.perfis[userId] = { userId, email, isAdmin: deveSerAdmin, isPremium: false, favoritos: [] }
+      s.perfis[userId] = { userId, email, nome: '', isAdmin: deveSerAdmin, isPremium: false, favoritos: [] }
       save(s)
     } else if (deveSerAdmin && !s.perfis[userId].isAdmin) {
       // Corrige perfis criados antes de VITE_ADMIN_EMAIL estar configurada corretamente.
       s.perfis[userId].isAdmin = true
       save(s)
     }
+    return s.perfis[userId]
+  }
+
+  async atualizarNome(userId: string, nome: string): Promise<Perfil> {
+    const s = load()
+    if (!s.perfis[userId]) throw new Error('Perfil não encontrado')
+    s.perfis[userId].nome = nome
+    save(s)
     return s.perfis[userId]
   }
 

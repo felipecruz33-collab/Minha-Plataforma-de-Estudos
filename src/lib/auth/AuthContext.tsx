@@ -8,11 +8,12 @@ interface AuthContextValue {
   loading: boolean
   user: { id: string; email: string } | null
   perfil: Perfil | null
-  signUp: (email: string, password: string) => Promise<void>
+  signUp: (email: string, password: string, nome: string) => Promise<void>
   signIn: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
   refreshPerfil: () => Promise<void>
   toggleFavorito: (questaoId: string) => Promise<void>
+  atualizarNome: (nome: string) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -67,19 +68,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [loadPerfil])
 
   const signUp = useCallback(
-    async (email: string, password: string) => {
+    async (email: string, password: string, nome: string) => {
+      let u: { id: string; email: string } | null = null
       if (isSupabaseConfigured && supabase) {
         const { data, error } = await supabase.auth.signUp({ email, password })
         if (error) throw error
-        if (data.user) {
-          const u = { id: data.user.id, email: data.user.email ?? email }
-          setUser(u)
-          await loadPerfil(u)
-        }
+        if (data.user) u = { id: data.user.id, email: data.user.email ?? email }
       } else {
-        const session = localAuth.signUp(email, password)
-        setUser(session)
-        await loadPerfil(session)
+        u = localAuth.signUp(email, password)
+      }
+      if (!u) return
+      setUser(u)
+      await loadPerfil(u)
+      if (nome.trim()) {
+        try {
+          const p = await repo.atualizarNome(u.id, nome.trim())
+          setPerfil(p)
+        } catch {
+          // Sem sessão autenticada ainda (ex.: aguardando confirmação de e-mail) —
+          // a pessoa pode preencher o nome depois em "Perfil".
+        }
       }
     },
     [loadPerfil],
@@ -127,9 +135,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user],
   )
 
+  const atualizarNome = useCallback(
+    async (nome: string) => {
+      if (!user) return
+      const p = await repo.atualizarNome(user.id, nome.trim())
+      setPerfil(p)
+    },
+    [user],
+  )
+
   const value = useMemo(
-    () => ({ loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito }),
-    [loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito],
+    () => ({ loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome }),
+    [loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
