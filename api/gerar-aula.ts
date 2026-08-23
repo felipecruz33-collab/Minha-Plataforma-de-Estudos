@@ -1,6 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { AulaGeradaSchema, TIPOS_BLOCO_IA } from '../src/lib/aiSchema.js'
+import { AulaGeradaIntermediateSchema, TIPOS_BLOCO_IA } from '../src/lib/aiIntermediateSchema.js'
 import { SYSTEM_PROMPT_GERAR_AULA } from '../src/lib/aiPrompt.js'
+import { AulaGeradaSchema } from '../src/lib/aiSchema.js'
+import { compilarAulas } from '../src/lib/lessonCompiler.js'
 
 // Texto extraído do PDF vem em base64 do cliente; ~4.4MB é o limite prático
 // de corpo de requisição em funções serverless da Vercel — fica com folga.
@@ -17,65 +19,78 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MO
 // (google-auth-library, protobufjs, ws) dentro da função serverless da
 // Vercel — não precisamos de nada disso pra uma chamada simples com chave de API.
 
-// JSON Schema padrão — o Gemini aceita via `responseJsonSchema` dentro de
-// `generationConfig`, que suporta additionalProperties (precisa pro "altExp",
-// que tem uma chave por alternativa A-E).
-const AULA_JSON_SCHEMA = {
+// JSON Schema do formato INTERMEDIÁRIO (semântico — sem HTML, sem "ordem").
+// A IA nunca gera o HTML final; `src/lib/lessonCompiler.ts` faz isso depois,
+// a partir de templates fixos — por isso a saída da IA é segura por
+// construção, e não só por ser filtrada depois.
+const SUBTOPICO_SCHEMA = {
+  type: 'object',
+  properties: {
+    titulo: { type: 'string', minLength: 1 },
+    conteudo: { type: 'string', minLength: 1 },
+  },
+  required: ['titulo', 'conteudo'],
+}
+
+const BLOCO_SCHEMA = {
+  type: 'object',
+  properties: {
+    tipo: { type: 'string', enum: [...TIPOS_BLOCO_IA] },
+    titulo: { type: 'string' },
+    conteudo: { type: 'string' },
+    subtopicos: { type: 'array', items: SUBTOPICO_SCHEMA },
+    itens: { type: 'array', items: { type: 'string' } },
+    colunas: { type: 'array', items: { type: 'string' } },
+    linhas: { type: 'array', items: { type: 'array', items: { type: 'string' } } },
+  },
+  required: ['tipo'],
+}
+
+const QUESTAO_SCHEMA = {
+  type: 'object',
+  properties: {
+    tema: { type: 'string' },
+    banca: { type: 'string' },
+    ano: { type: 'string' },
+    orgao: { type: 'string' },
+    enunciado: { type: 'string', minLength: 1 },
+    alternativas: {
+      type: 'array',
+      minItems: 2,
+      maxItems: 5,
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', pattern: '^[A-E]$' },
+          texto: { type: 'string', minLength: 1 },
+        },
+        required: ['id', 'texto'],
+      },
+    },
+    gabarito: { type: 'string', pattern: '^[A-E]$' },
+    explicacao: { type: 'string' },
+    altExp: { type: 'object', additionalProperties: { type: 'string' } },
+  },
+  required: ['tema', 'banca', 'ano', 'orgao', 'enunciado', 'alternativas', 'gabarito', 'explicacao', 'altExp'],
+}
+
+const AULA_SCHEMA = {
+  type: 'object',
+  properties: {
+    titulo: { type: 'string', minLength: 1 },
+    blocos: { type: 'array', minItems: 1, items: BLOCO_SCHEMA },
+    questoes: { type: 'array', items: QUESTAO_SCHEMA },
+  },
+  required: ['titulo', 'blocos', 'questoes'],
+}
+
+const AULA_GERADA_JSON_SCHEMA = {
   type: 'object',
   properties: {
     materia: { type: 'string', minLength: 1 },
-    aula: {
-      type: 'object',
-      properties: {
-        titulo: { type: 'string', minLength: 1 },
-        blocos: {
-          type: 'array',
-          minItems: 1,
-          items: {
-            type: 'object',
-            properties: {
-              tipo: { type: 'string', enum: [...TIPOS_BLOCO_IA] },
-              ordem: { type: 'integer', minimum: 0 },
-              html: { type: 'string', minLength: 1 },
-            },
-            required: ['tipo', 'ordem', 'html'],
-          },
-        },
-        questoes: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              tema: { type: 'string' },
-              banca: { type: 'string' },
-              ano: { type: 'string' },
-              orgao: { type: 'string' },
-              enunciado: { type: 'string', minLength: 1 },
-              alternativas: {
-                type: 'array',
-                minItems: 2,
-                maxItems: 5,
-                items: {
-                  type: 'object',
-                  properties: {
-                    id: { type: 'string', pattern: '^[A-E]$' },
-                    texto: { type: 'string', minLength: 1 },
-                  },
-                  required: ['id', 'texto'],
-                },
-              },
-              gabarito: { type: 'string', pattern: '^[A-E]$' },
-              explicacao: { type: 'string' },
-              altExp: { type: 'object', additionalProperties: { type: 'string' } },
-            },
-            required: ['tema', 'banca', 'ano', 'orgao', 'enunciado', 'alternativas', 'gabarito', 'explicacao', 'altExp'],
-          },
-        },
-      },
-      required: ['titulo', 'blocos', 'questoes'],
-    },
+    aulas: { type: 'array', minItems: 1, items: AULA_SCHEMA },
   },
-  required: ['materia', 'aula'],
+  required: ['materia', 'aulas'],
 }
 
 interface GeminiPart {
@@ -89,6 +104,43 @@ interface GeminiResponse {
   }[]
   promptFeedback?: { blockReason?: string }
   error?: { message?: string; status?: string }
+}
+
+async function chamarGemini(apiKey: string, promptTexto: string): Promise<{ res: Response; dados: GeminiResponse }> {
+  const corpoRequisicao = JSON.stringify({
+    systemInstruction: { parts: [{ text: SYSTEM_PROMPT_GERAR_AULA }] },
+    contents: [{ role: 'user', parts: [{ text: promptTexto }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseJsonSchema: AULA_GERADA_JSON_SCHEMA,
+      maxOutputTokens: 24000,
+    },
+  })
+
+  // O modelo Flash gratuito às vezes devolve 503 "high demand" em pico de
+  // uso — geralmente passa em poucos segundos, então tenta de novo antes
+  // de desistir. Backoff curto de propósito: com o reparo (uma segunda
+  // chamada possível), o tempo total ainda precisa caber nos 60s da função.
+  const esperasEntreTentativas = [0, 3000]
+  let res: Response
+  let dados: GeminiResponse
+  do {
+    const espera = esperasEntreTentativas.shift()!
+    if (espera) await new Promise((r) => setTimeout(r, espera))
+    res = await fetch(GEMINI_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      body: corpoRequisicao,
+    })
+    dados = (await res.json()) as GeminiResponse
+  } while (res.status === 503 && esperasEntreTentativas.length > 0)
+
+  return { res, dados }
+}
+
+function extrairTexto(dados: GeminiResponse): string {
+  const candidato = dados.candidates?.[0]
+  return candidato?.content?.parts?.map((p) => p.text ?? '').join('') ?? ''
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -138,32 +190,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .filter(Boolean)
       .join('\n\n')
 
-    const corpoRequisicao = JSON.stringify({
-      systemInstruction: { parts: [{ text: SYSTEM_PROMPT_GERAR_AULA }] },
-      contents: [{ role: 'user', parts: [{ text: userText }] }],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseJsonSchema: AULA_JSON_SCHEMA,
-        maxOutputTokens: 24000,
-      },
-    })
-
-    // O modelo Flash gratuito às vezes devolve 503 "high demand" em pico de
-    // uso — geralmente passa em poucos segundos, então tenta de novo antes
-    // de desistir (sem exagerar, pra caber no tempo máximo da função).
-    let geminiRes: Response
-    let dados: GeminiResponse
-    const esperasEntreTentativas = [0, 4000, 10000]
-    do {
-      const espera = esperasEntreTentativas.shift()!
-      if (espera) await new Promise((r) => setTimeout(r, espera))
-      geminiRes = await fetch(GEMINI_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: corpoRequisicao,
-      })
-      dados = (await geminiRes.json()) as GeminiResponse
-    } while (geminiRes.status === 503 && esperasEntreTentativas.length > 0)
+    const { res: geminiRes, dados } = await chamarGemini(apiKey, userText)
 
     if (!geminiRes.ok) {
       if (geminiRes.status === 429) {
@@ -193,21 +220,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.status(502).json({ ok: false, error: `A IA bloqueou o conteúdo (motivo: ${dados.promptFeedback.blockReason}).` })
       return
     }
-
-    const candidato = dados.candidates?.[0]
-    if (candidato?.finishReason === 'MAX_TOKENS') {
+    if (dados.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
       res.status(502).json({
         ok: false,
         error: 'A aula gerada ficou grande demais e foi cortada. Tente dividir o PDF em partes menores.',
       })
       return
     }
-    if (candidato?.finishReason && candidato.finishReason !== 'STOP') {
-      res.status(502).json({ ok: false, error: `A IA não conseguiu gerar a aula (motivo: ${candidato.finishReason}).` })
-      return
-    }
 
-    const textoResposta = candidato?.content?.parts?.map((p) => p.text ?? '').join('') ?? ''
+    let textoResposta = extrairTexto(dados)
     if (!textoResposta) {
       res.status(502).json({ ok: false, error: 'A IA não devolveu nenhum conteúdo. Tente novamente.' })
       return
@@ -221,14 +242,60 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return
     }
 
-    const validado = AulaGeradaSchema.safeParse(bruto)
+    let validado = AulaGeradaIntermediateSchema.safeParse(bruto)
+
+    // Se a estrutura veio errada, dá uma chance de reparo: manda de volta o
+    // que a IA gerou + os erros específicos do schema, pedindo pra corrigir
+    // só a estrutura (sem mexer no conteúdo pedagógico nem inventar nada).
     if (!validado.success) {
-      console.error('gerar-aula: saída da IA não bateu com o schema:', validado.error.flatten())
-      res.status(502).json({ ok: false, error: 'A IA devolveu dados em formato inesperado. Tente novamente.' })
+      const erros = validado.error.issues.map((i) => `${i.path.join('.') || '(raiz)'}: ${i.message}`)
+      console.error('gerar-aula: saída intermediária inválida, tentando reparo:', erros)
+
+      const promptReparo = [
+        userText,
+        '--- TENTATIVA ANTERIOR (INVÁLIDA) ---',
+        textoResposta,
+        '--- ERROS DE ESTRUTURA ENCONTRADOS ---',
+        erros.join('\n'),
+        'Corrija SOMENTE esses problemas estruturais no JSON acima. Não altere o conteúdo pedagógico, não remova nem invente questões, não invente informação que não estava lá. Devolva o JSON corrigido completo, com a mesma estrutura geral.',
+      ].join('\n\n')
+
+      const reparo = await chamarGemini(apiKey, promptReparo)
+      if (!reparo.res.ok) {
+        res.status(502).json({ ok: false, error: 'A IA devolveu um formato inválido e a correção automática falhou. Tente novamente.' })
+        return
+      }
+      textoResposta = extrairTexto(reparo.dados)
+      try {
+        bruto = JSON.parse(textoResposta)
+      } catch {
+        res.status(502).json({ ok: false, error: 'A IA devolveu um JSON inválido mesmo após a correção. Tente novamente.' })
+        return
+      }
+      validado = AulaGeradaIntermediateSchema.safeParse(bruto)
+      if (!validado.success) {
+        console.error('gerar-aula: saída ainda inválida após reparo:', validado.error.flatten())
+        res.status(502).json({ ok: false, error: 'A IA devolveu dados em formato inesperado, mesmo após tentar corrigir. Tente novamente.' })
+        return
+      }
+    }
+
+    // Compila o JSON semântico da IA no formato final (o mesmo que o
+    // importador de .json manual usa) e revalida contra o schema final —
+    // segunda camada de validação, agora sobre o HTML já gerado por nós.
+    const aulasCompiladas = compilarAulas(validado.data)
+    const aulasValidadas = aulasCompiladas.map((aula) => AulaGeradaSchema.safeParse(aula))
+    const falhas = aulasValidadas.filter((v) => !v.success)
+    if (falhas.length > 0) {
+      console.error(
+        'gerar-aula: aula compilada não bateu com o schema final:',
+        falhas.map((f) => (!f.success ? f.error.flatten() : null)),
+      )
+      res.status(502).json({ ok: false, error: 'Erro interno ao montar a aula. Tente novamente.' })
       return
     }
 
-    res.status(200).json({ ok: true, payload: validado.data })
+    res.status(200).json({ ok: true, payload: aulasValidadas.map((v) => (v.success ? v.data : null)) })
   } catch (err) {
     console.error('gerar-aula falhou:', err)
     const mensagem = err instanceof Error ? err.message : 'Erro inesperado ao gerar a aula.'
