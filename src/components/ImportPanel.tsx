@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useAuth } from '../lib/auth/AuthContext'
 import { repo } from '../lib/repo'
 import { validateAulaImport } from '../lib/schema'
+import { MateriaPicker, resolverNomeMateria, type EscolhaMateria } from './MateriaPicker'
 import { Tabs } from './ui/Tabs'
 
 interface ImportPanelProps {
@@ -13,7 +14,7 @@ interface ImportPanelProps {
 export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   const { user } = useAuth()
   const [aba, setAba] = useState<'pdf' | 'json'>('pdf')
-  const [materiaOverride, setMateriaOverride] = useState('')
+  const [escolhaMateria, setEscolhaMateria] = useState<EscolhaMateria>({ modo: 'auto' })
   const [busy, setBusy] = useState(false)
   const [errors, setErrors] = useState<string[]>([])
   const [sucesso, setSucesso] = useState<string | null>(null)
@@ -21,6 +22,8 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   if (!user) return null
 
   async function importarPayload(payload: unknown, nomeArquivo: string, viaIA: boolean) {
+    const nomeEscolhido = resolverNomeMateria(escolhaMateria)
+
     const result = validateAulaImport(payload)
     if (!result.valid || !result.data) {
       setErrors(result.errors)
@@ -29,7 +32,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
         await repo.addGeracao({
           userId: user!.id,
           nomeArquivo,
-          materia: materiaOverride || '(detecção automática)',
+          materia: nomeEscolhido || '(detecção automática)',
           aulaTitulo: '—',
           status: 'erro',
           mensagem: result.errors.slice(0, 3).join('; '),
@@ -38,7 +41,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
       return
     }
 
-    if (materiaOverride.trim()) result.data.materia = materiaOverride.trim()
+    if (nomeEscolhido) result.data.materia = nomeEscolhido
 
     const aula = await repo.upsertAula(user!.id, result.data, { isBiblioteca })
     setErrors([])
@@ -56,6 +59,10 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   }
 
   async function onJsonFile(file: File) {
+    if (escolhaMateria.modo === 'nova' && !escolhaMateria.nome?.trim()) {
+      setErrors(['Digite um nome para a nova matéria, ou escolha outra opção de destino.'])
+      return
+    }
     setBusy(true)
     setErrors([])
     setSucesso(null)
@@ -77,19 +84,24 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   }
 
   async function onPdfFile(file: File) {
+    if (escolhaMateria.modo === 'nova' && !escolhaMateria.nome?.trim()) {
+      setErrors(['Digite um nome para a nova matéria, ou escolha outra opção de destino.'])
+      return
+    }
     setBusy(true)
     setErrors([])
     setSucesso(null)
     try {
+      const nomeEscolhido = resolverNomeMateria(escolhaMateria)
       const { gerarAulaViaPdfStub } = await import('../lib/ai/pdfToAula')
-      const payload = await gerarAulaViaPdfStub(file, materiaOverride)
+      const payload = await gerarAulaViaPdfStub(file, nomeEscolhido)
       await importarPayload(payload, file.name, true)
     } catch (e) {
       setErrors([e instanceof Error ? e.message : 'Erro inesperado ao gerar a aula a partir do PDF.'])
       await repo.addGeracao({
         userId: user!.id,
         nomeArquivo: file.name,
-        materia: materiaOverride || '(detecção automática)',
+        materia: resolverNomeMateria(escolhaMateria) || '(detecção automática)',
         aulaTitulo: '—',
         status: 'erro',
         mensagem: e instanceof Error ? e.message : 'Erro inesperado.',
@@ -114,16 +126,12 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
         }}
       />
       <div className="space-y-4 p-4">
-        <label className="block text-sm">
-          <span className="mb-1 block font-medium text-slate-600">Matéria (opcional)</span>
-          <input
-            type="text"
-            value={materiaOverride}
-            onChange={(e) => setMateriaOverride(e.target.value)}
-            placeholder="Deixe em branco para usar a matéria do arquivo"
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-blue"
-          />
-        </label>
+        <MateriaPicker
+          isBiblioteca={isBiblioteca}
+          autoLabel={aba === 'pdf' ? 'Deixar a IA identificar automaticamente' : 'Usar a matéria do próprio arquivo .json'}
+          value={escolhaMateria}
+          onChange={setEscolhaMateria}
+        />
 
         {aba === 'pdf' ? (
           <div>

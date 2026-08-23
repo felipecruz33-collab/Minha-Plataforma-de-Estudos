@@ -1,12 +1,12 @@
 import { ArrowLeft, BookOpenText, Check, Copy, Lock, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
+import { CopyToPersonalDialog } from '../components/CopyToPersonalDialog'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAuth } from '../lib/auth/AuthContext'
-import { copiarAulaParaMinhaBiblioteca } from '../lib/copiarAula'
 import { repo } from '../lib/repo'
 import type { Aula, Materia } from '../lib/types'
 
@@ -14,7 +14,7 @@ export default function MateriaDetail() {
   const { materiaId } = useParams<{ materiaId: string }>()
   const location = useLocation()
   const isBiblioteca = location.pathname.startsWith('/biblioteca')
-  const { user, perfil } = useAuth()
+  const { perfil } = useAuth()
   const podeVerBiblioteca = !!perfil?.isPremium || !!perfil?.isAdmin
   const podeGerir = isBiblioteca ? !!perfil?.isAdmin : true
   const acessoLiberado = !isBiblioteca || podeVerBiblioteca
@@ -22,7 +22,7 @@ export default function MateriaDetail() {
   const [materia, setMateria] = useState<Materia | null>(null)
   const [aulas, setAulas] = useState<Aula[] | null>(null)
   const [paraExcluir, setParaExcluir] = useState<Aula | null>(null)
-  const [copiando, setCopiando] = useState<string | null>(null)
+  const [paraCopiar, setParaCopiar] = useState<Aula | null>(null)
   const [copiadas, setCopiadas] = useState<Set<string>>(new Set())
 
   async function carregar() {
@@ -42,17 +42,6 @@ export default function MateriaDetail() {
     await repo.deleteAula(paraExcluir.id)
     setParaExcluir(null)
     carregar()
-  }
-
-  async function copiar(aula: Aula) {
-    if (!user || !materia) return
-    setCopiando(aula.id)
-    try {
-      await copiarAulaParaMinhaBiblioteca(user.id, aula, materia.nome)
-      setCopiadas((prev) => new Set(prev).add(aula.id))
-    } finally {
-      setCopiando(null)
-    }
   }
 
   const voltarPara = isBiblioteca ? '/biblioteca' : '/'
@@ -104,8 +93,7 @@ export default function MateriaDetail() {
               {isBiblioteca && (
                 <button
                   type="button"
-                  disabled={copiando === a.id}
-                  onClick={() => copiar(a)}
+                  onClick={() => setParaCopiar(a)}
                   className="rounded-lg p-2 text-brand-indigo hover:bg-indigo-50 disabled:opacity-50"
                   aria-label="Copiar para minha biblioteca"
                   title="Copiar para minha biblioteca"
@@ -138,6 +126,13 @@ export default function MateriaDetail() {
         description="Essa aula e todas as questões associadas serão excluídas permanentemente."
         onConfirm={confirmarExclusao}
         onCancel={() => setParaExcluir(null)}
+      />
+
+      <CopyToPersonalDialog
+        aula={paraCopiar}
+        materiaOrigemNome={materia?.nome ?? ''}
+        onClose={() => setParaCopiar(null)}
+        onCopied={(aulaId) => setCopiadas((prev) => new Set(prev).add(aulaId))}
       />
     </div>
   )
