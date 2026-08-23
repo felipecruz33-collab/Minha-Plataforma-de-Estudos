@@ -59,6 +59,11 @@ export class LocalRepository implements DataRepository {
     )
   }
 
+  async getMateria(materiaId: string): Promise<Materia | null> {
+    const s = load()
+    return s.materias.find((m) => m.id === materiaId) ?? null
+  }
+
   async createMateriaVazia(userId: string, nome: string, isBiblioteca: boolean): Promise<Materia> {
     const s = load()
     const materia: Materia = {

@@ -47,6 +47,13 @@ export class SupabaseRepository implements DataRepository {
     }))
   }
 
+  async getMateria(materiaId: string): Promise<Materia | null> {
+    const { data, error } = await this.db().from('materias').select('*').eq('id', materiaId).maybeSingle()
+    if (error) throw error
+    if (!data) return null
+    return { id: data.id, userId: data.user_id, nome: data.nome, isBiblioteca: data.is_biblioteca, criadoEm: data.criado_em }
+  }
+
   async createMateriaVazia(userId: string, nome: string, isBiblioteca: boolean): Promise<Materia> {
     const { data, error } = await this.db()
       .from('materias')

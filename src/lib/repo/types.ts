@@ -30,6 +30,7 @@ export interface QuestaoFiltro {
 export interface DataRepository {
   listMaterias(userId: string): Promise<MateriaComContagem[]>
   listBiblioteca(): Promise<MateriaComContagem[]>
+  getMateria(materiaId: string): Promise<Materia | null>
   createMateriaVazia(userId: string, nome: string, isBiblioteca: boolean): Promise<Materia>
   deleteMateria(materiaId: string): Promise<void>
 
