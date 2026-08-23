@@ -47,6 +47,13 @@ export class SupabaseRepository implements DataRepository {
     }))
   }
 
+  async getMateria(materiaId: string): Promise<Materia | null> {
+    const { data, error } = await this.db().from('materias').select('*').eq('id', materiaId).maybeSingle()
+    if (error) throw error
+    if (!data) return null
+    return { id: data.id, userId: data.user_id, nome: data.nome, isBiblioteca: data.is_biblioteca, criadoEm: data.criado_em }
+  }
+
   async createMateriaVazia(userId: string, nome: string, isBiblioteca: boolean): Promise<Materia> {
     const { data, error } = await this.db()
       .from('materias')
@@ -238,6 +245,20 @@ export class SupabaseRepository implements DataRepository {
       return { userId, email, isAdmin: false, isPremium: false, favoritos: [] }
     }
     return { userId: data.id, email: data.email, isAdmin: data.is_admin, isPremium: data.is_premium, favoritos: data.favoritos ?? [] }
+  }
+
+  async listPerfis(): Promise<Perfil[]> {
+    // RLS (0003_admin_lista_usuarios.sql) só devolve todas as linhas para quem é admin;
+    // para qualquer outro usuário, o Supabase já filtra e devolve só a própria linha.
+    const { data, error } = await this.db().from('profiles').select('*').order('criado_em', { ascending: false })
+    if (error) throw error
+    return (data ?? []).map((p: any) => ({
+      userId: p.id,
+      email: p.email,
+      isAdmin: p.is_admin,
+      isPremium: p.is_premium,
+      favoritos: p.favoritos ?? [],
+    }))
   }
 
   async setPremium(): Promise<void> {

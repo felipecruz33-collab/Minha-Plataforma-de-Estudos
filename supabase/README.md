@@ -23,7 +23,7 @@ desenvolvimento/demonstração sem backend.
    (não é possível pelo cliente — a RLS bloqueia isso de propósito):
 
    ```sql
-   update public.profiles set is_admin = true where email = 'SEU_EMAIL_ADMIN_AQUI';
+   update public.profiles set is_admin = true where email = 'felipe.cruz33@gmail.com';
    ```
 
 5. Para liberar Premium manualmente (antes de configurar o Google Play

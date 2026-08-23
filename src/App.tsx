@@ -17,6 +17,7 @@ import Premium from './pages/Premium'
 import Questoes from './pages/Questoes'
 import Revisao from './pages/Revisao'
 import Simulados from './pages/Simulados'
+import Usuarios from './pages/Usuarios'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -58,6 +59,7 @@ function AppRoutes() {
         <Route path="/backup" element={<Backup />} />
         <Route path="/geracoes" element={<Geracoes />} />
         <Route path="/premium" element={<Premium />} />
+        <Route path="/usuarios" element={<Usuarios />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

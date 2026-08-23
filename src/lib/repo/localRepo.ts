@@ -3,6 +3,9 @@ import type { BackupData, DataRepository, MateriaComContagem } from './types'
 
 const STORAGE_KEY = 'mpe:v1'
 
+/** Usado quando VITE_ADMIN_EMAIL não está configurada (ex.: deploy sem variáveis de ambiente). */
+const DEFAULT_ADMIN_EMAIL = 'felipe.cruz33@gmail.com'
+
 interface Store {
   materias: Materia[]
   aulas: Aula[]
@@ -54,6 +57,11 @@ export class LocalRepository implements DataRepository {
       s.materias.filter((m) => m.isBiblioteca),
       s.aulas,
     )
+  }
+
+  async getMateria(materiaId: string): Promise<Materia | null> {
+    const s = load()
+    return s.materias.find((m) => m.id === materiaId) ?? null
   }
 
   async createMateriaVazia(userId: string, nome: string, isBiblioteca: boolean): Promise<Materia> {
@@ -174,18 +182,23 @@ export class LocalRepository implements DataRepository {
 
   async getPerfil(userId: string, email: string): Promise<Perfil> {
     const s = load()
+    const adminEmail = ((import.meta.env.VITE_ADMIN_EMAIL as string | undefined) ?? DEFAULT_ADMIN_EMAIL).toLowerCase()
+    const deveSerAdmin = email.toLowerCase() === adminEmail
+
     if (!s.perfis[userId]) {
-      const adminEmail = (import.meta.env.VITE_ADMIN_EMAIL as string | undefined)?.toLowerCase()
-      s.perfis[userId] = {
-        userId,
-        email,
-        isAdmin: !!adminEmail && email.toLowerCase() === adminEmail,
-        isPremium: false,
-        favoritos: [],
-      }
+      s.perfis[userId] = { userId, email, isAdmin: deveSerAdmin, isPremium: false, favoritos: [] }
+      save(s)
+    } else if (deveSerAdmin && !s.perfis[userId].isAdmin) {
+      // Corrige perfis criados antes de VITE_ADMIN_EMAIL estar configurada corretamente.
+      s.perfis[userId].isAdmin = true
       save(s)
     }
     return s.perfis[userId]
+  }
+
+  async listPerfis(): Promise<Perfil[]> {
+    const s = load()
+    return Object.values(s.perfis)
   }
 
   async setPremium(userId: string, value: boolean): Promise<void> {
