@@ -1,4 +1,4 @@
-import type { Aula, AulaImportPayload, Bloco, GeracaoIA, Materia, Perfil, Questao, Resposta } from '../types'
+import type { Aula, AulaImportPayload, Bloco, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
 import type { BackupData, DataRepository, MateriaComContagem } from './types'
 
 const STORAGE_KEY = 'mpe:v1'
@@ -12,10 +12,11 @@ interface Store {
   respostas: Resposta[]
   perfis: Record<string, Perfil>
   geracoes: GeracaoIA[]
+  simulados: Simulado[]
 }
 
 function emptyStore(): Store {
-  return { materias: [], aulas: [], respostas: [], perfis: {}, geracoes: [] }
+  return { materias: [], aulas: [], respostas: [], perfis: {}, geracoes: [], simulados: [] }
 }
 
 function load(): Store {
@@ -282,5 +283,24 @@ export class LocalRepository implements DataRepository {
     s.geracoes.push(nova)
     save(s)
     return nova
+  }
+
+  async listSimulados(userId: string): Promise<Simulado[]> {
+    const s = load()
+    return s.simulados.filter((sim) => sim.userId === userId).sort((a, b) => b.criadoEm.localeCompare(a.criadoEm))
+  }
+
+  async registrarSimulado(simulado: Omit<Simulado, 'id' | 'criadoEm'>): Promise<Simulado> {
+    const s = load()
+    const novo: Simulado = { ...simulado, id: id(), criadoEm: new Date().toISOString() }
+    s.simulados.push(novo)
+    save(s)
+    return novo
+  }
+
+  async deleteSimulado(simuladoId: string): Promise<void> {
+    const s = load()
+    s.simulados = s.simulados.filter((sim) => sim.id !== simuladoId)
+    save(s)
   }
 }
