@@ -1,0 +1,142 @@
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { repo } from '../repo'
+import { isSupabaseConfigured, supabase } from '../supabaseClient'
+import type { Perfil } from '../types'
+import * as localAuth from './localAuth'
+
+interface AuthContextValue {
+  loading: boolean
+  user: { id: string; email: string } | null
+  perfil: Perfil | null
+  signUp: (email: string, password: string) => Promise<void>
+  signIn: (email: string, password: string) => Promise<void>
+  signOut: () => Promise<void>
+  refreshPerfil: () => Promise<void>
+  toggleFavorito: (questaoId: string) => Promise<void>
+}
+
+const AuthContext = createContext<AuthContextValue | null>(null)
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [loading, setLoading] = useState(true)
+  const [user, setUser] = useState<{ id: string; email: string } | null>(null)
+  const [perfil, setPerfil] = useState<Perfil | null>(null)
+
+  const loadPerfil = useCallback(async (u: { id: string; email: string }) => {
+    const p = await repo.getPerfil(u.id, u.email)
+    setPerfil(p)
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+
+    async function init() {
+      if (isSupabaseConfigured && supabase) {
+        const { data } = await supabase.auth.getSession()
+        const sessionUser = data.session?.user
+        if (sessionUser && mounted) {
+          const u = { id: sessionUser.id, email: sessionUser.email ?? '' }
+          setUser(u)
+          await loadPerfil(u)
+        }
+        supabase.auth.onAuthStateChange(async (_event, session) => {
+          if (!mounted) return
+          if (session?.user) {
+            const u = { id: session.user.id, email: session.user.email ?? '' }
+            setUser(u)
+            await loadPerfil(u)
+          } else {
+            setUser(null)
+            setPerfil(null)
+          }
+        })
+      } else {
+        const session = localAuth.getSession()
+        if (session && mounted) {
+          setUser(session)
+          await loadPerfil(session)
+        }
+      }
+      if (mounted) setLoading(false)
+    }
+
+    init()
+    return () => {
+      mounted = false
+    }
+  }, [loadPerfil])
+
+  const signUp = useCallback(
+    async (email: string, password: string) => {
+      if (isSupabaseConfigured && supabase) {
+        const { data, error } = await supabase.auth.signUp({ email, password })
+        if (error) throw error
+        if (data.user) {
+          const u = { id: data.user.id, email: data.user.email ?? email }
+          setUser(u)
+          await loadPerfil(u)
+        }
+      } else {
+        const session = localAuth.signUp(email, password)
+        setUser(session)
+        await loadPerfil(session)
+      }
+    },
+    [loadPerfil],
+  )
+
+  const signIn = useCallback(
+    async (email: string, password: string) => {
+      if (isSupabaseConfigured && supabase) {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+        if (error) throw error
+        if (data.user) {
+          const u = { id: data.user.id, email: data.user.email ?? email }
+          setUser(u)
+          await loadPerfil(u)
+        }
+      } else {
+        const session = localAuth.signIn(email, password)
+        setUser(session)
+        await loadPerfil(session)
+      }
+    },
+    [loadPerfil],
+  )
+
+  const signOut = useCallback(async () => {
+    if (isSupabaseConfigured && supabase) {
+      await supabase.auth.signOut()
+    } else {
+      localAuth.signOut()
+    }
+    setUser(null)
+    setPerfil(null)
+  }, [])
+
+  const refreshPerfil = useCallback(async () => {
+    if (user) await loadPerfil(user)
+  }, [user, loadPerfil])
+
+  const toggleFavorito = useCallback(
+    async (questaoId: string) => {
+      if (!user) return
+      const p = await repo.toggleFavorito(user.id, questaoId)
+      setPerfil(p)
+    },
+    [user],
+  )
+
+  const value = useMemo(
+    () => ({ loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito }),
+    [loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito],
+  )
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+}
+
+export function useAuth() {
+  const ctx = useContext(AuthContext)
+  if (!ctx) throw new Error('useAuth precisa estar dentro de <AuthProvider>')
+  return ctx
+}

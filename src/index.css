@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-white text-slate-800 antialiased;
+  }
+}
+
+/* Classes geradas pelo contrato técnico (Seção 6) — usadas no HTML dos blocos de conteúdo */
+@layer components {
+  h3.subtitulo-aula {
+    @apply mt-6 mb-2 text-lg font-bold text-navy first:mt-0;
+  }
+  h4.miolo {
+    @apply mt-4 mb-1 text-base font-semibold text-slate-700;
+  }
+
+  .box {
+    @apply my-4 rounded-xl border p-4 text-sm leading-relaxed;
+  }
+  .box-title {
+    @apply mb-2 flex items-center gap-2 font-bold;
+  }
+  .box.dica {
+    @apply border-blue-200 bg-blue-50 text-blue-950;
+  }
+  .box.dica .box-title {
+    @apply text-blue-700;
+  }
+  .box.alerta {
+    @apply border-amber-200 bg-amber-50 text-amber-950;
+  }
+  .box.alerta .box-title {
+    @apply text-amber-700;
+  }
+  .box.memorize {
+    @apply border-emerald-200 bg-emerald-50 text-emerald-950;
+  }
+  .box.memorize .box-title {
+    @apply text-emerald-700;
+  }
+  .box.exemplo {
+    @apply border-indigo-200 bg-indigo-50 text-indigo-950;
+  }
+  .box.exemplo .box-title {
+    @apply text-indigo-700;
+  }
+  .box.palavra {
+    @apply border-purple-200 bg-purple-50 text-purple-950;
+  }
+  .box.palavra .box-title {
+    @apply text-purple-700;
+  }
+  .naoconfunda {
+    @apply my-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm leading-relaxed text-rose-950;
+  }
+  .naoconfunda-title {
+    @apply mb-2 flex items-center gap-2 font-bold text-rose-700;
+  }
+
+  .conteudo-html table {
+    @apply my-4 w-full border-collapse overflow-hidden rounded-lg text-sm;
+  }
+  .conteudo-html th {
+    @apply bg-navy px-3 py-2 text-left font-semibold text-white;
+  }
+  .conteudo-html td {
+    @apply border-b border-slate-200 px-3 py-2;
+  }
+  .conteudo-html p {
+    @apply mb-3 leading-relaxed text-slate-700;
+  }
+  .conteudo-html ul {
+    @apply mb-3 ml-5 list-disc space-y-1 text-slate-700;
+  }
+  .conteudo-html ol {
+    @apply mb-3 ml-5 list-decimal space-y-1 text-slate-700;
+  }
+}
