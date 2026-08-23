@@ -12,6 +12,10 @@ desenvolvimento/demonstração sem backend.
 2. Rode as migrações, na ordem, no SQL Editor do painel (ou via `supabase db push`):
    - `migrations/0001_schema.sql`
    - `migrations/0002_rls_policies.sql`
+   - `migrations/0003_admin_lista_usuarios.sql`
+   - `migrations/0004_perfil_nome.sql`
+   - `migrations/0005_user_roles.sql`
+   - `migrations/0006_simulados.sql`
 3. Copie `.env.example` para `.env.local` e preencha:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`

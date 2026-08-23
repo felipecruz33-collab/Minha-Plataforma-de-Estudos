@@ -69,6 +69,25 @@ export interface Resposta {
   respondidoEm: string
 }
 
+export interface SimuladoMateria {
+  materiaId: string
+  materiaNome: string
+  quantidade: number
+  acertos: number
+}
+
+export interface Simulado {
+  id: string
+  userId: string
+  nome: string
+  materias: SimuladoMateria[]
+  tempoLimiteSegundos: number | null
+  duracaoSegundos: number
+  totalQuestoes: number
+  acertos: number
+  criadoEm: string
+}
+
 export interface GeracaoIA {
   id: string
   userId: string

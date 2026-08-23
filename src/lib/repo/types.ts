@@ -1,4 +1,4 @@
-import type { Aula, AulaImportPayload, GeracaoIA, Materia, Perfil, Questao, Resposta } from '../types'
+import type { Aula, AulaImportPayload, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
 
 export interface MateriaComContagem extends Materia {
   numAulas: number
@@ -56,6 +56,10 @@ export interface DataRepository {
 
   listGeracoes(userId: string): Promise<GeracaoIA[]>
   addGeracao(geracao: Omit<GeracaoIA, 'id' | 'criadoEm'>): Promise<GeracaoIA>
+
+  listSimulados(userId: string): Promise<Simulado[]>
+  registrarSimulado(simulado: Omit<Simulado, 'id' | 'criadoEm'>): Promise<Simulado>
+  deleteSimulado(simuladoId: string): Promise<void>
 }
 
 export function extractQuestoes(aulas: Aula[]): Questao[] {

@@ -1,5 +1,5 @@
 import { supabase } from '../supabaseClient'
-import type { Aula, AulaImportPayload, Bloco, GeracaoIA, Materia, Perfil, Questao, Resposta } from '../types'
+import type { Aula, AulaImportPayload, Bloco, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
 import type { BackupData, DataRepository, MateriaComContagem } from './types'
 
 /**
@@ -399,5 +399,57 @@ export class SupabaseRepository implements DataRepository {
       mensagem: data.mensagem,
       criadoEm: data.criado_em,
     }
+  }
+
+  async listSimulados(userId: string): Promise<Simulado[]> {
+    const { data, error } = await this.db().from('simulados').select('*').eq('user_id', userId).order('criado_em', { ascending: false })
+    if (error) throw error
+    return (data ?? []).map(
+      (s: any) =>
+        ({
+          id: s.id,
+          userId: s.user_id,
+          nome: s.nome,
+          materias: s.materias,
+          tempoLimiteSegundos: s.tempo_limite_segundos,
+          duracaoSegundos: s.duracao_segundos,
+          totalQuestoes: s.total_questoes,
+          acertos: s.acertos,
+          criadoEm: s.criado_em,
+        }) as Simulado,
+    )
+  }
+
+  async registrarSimulado(simulado: Omit<Simulado, 'id' | 'criadoEm'>): Promise<Simulado> {
+    const { data, error } = await this.db()
+      .from('simulados')
+      .insert({
+        user_id: simulado.userId,
+        nome: simulado.nome,
+        materias: simulado.materias,
+        tempo_limite_segundos: simulado.tempoLimiteSegundos,
+        duracao_segundos: simulado.duracaoSegundos,
+        total_questoes: simulado.totalQuestoes,
+        acertos: simulado.acertos,
+      })
+      .select()
+      .single()
+    if (error) throw error
+    return {
+      id: data.id,
+      userId: data.user_id,
+      nome: data.nome,
+      materias: data.materias,
+      tempoLimiteSegundos: data.tempo_limite_segundos,
+      duracaoSegundos: data.duracao_segundos,
+      totalQuestoes: data.total_questoes,
+      acertos: data.acertos,
+      criadoEm: data.criado_em,
+    }
+  }
+
+  async deleteSimulado(simuladoId: string): Promise<void> {
+    const { error } = await this.db().from('simulados').delete().eq('id', simuladoId)
+    if (error) throw error
   }
 }
