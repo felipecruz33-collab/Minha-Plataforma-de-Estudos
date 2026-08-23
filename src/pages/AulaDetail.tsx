@@ -8,6 +8,7 @@ import { Tabs } from '../components/ui/Tabs'
 import { QuestionCard } from '../components/QuestionCard'
 import { Button } from '../components/ui/Button'
 import { TIPO_BLOCO_LABEL } from '../lib/blocoLabels'
+import { TIPO_BLOCO_ICON, TIPO_BLOCO_ICON_COR } from '../lib/blocoStyle'
 import { useAuth } from '../lib/auth/AuthContext'
 import { repo } from '../lib/repo'
 import { TIPOS_COM_ABA, type Aula, type Materia } from '../lib/types'
@@ -33,8 +34,13 @@ export default function AulaDetail() {
   const abasDisponiveis = useMemo(() => {
     if (!aula) return []
     const presentes = TIPOS_COM_ABA.filter((tipo) => aula.blocos.some((b) => b.tipo === tipo))
-    const abas = [{ key: 'teoria', label: 'Teoria' }, ...presentes.map((t) => ({ key: t, label: TIPO_BLOCO_LABEL[t] }))]
-    if (aula.questoes.length) abas.push({ key: 'questoes', label: `Questões (${aula.questoes.length})` })
+    const abas = [
+      { key: 'teoria', label: 'Teoria', icon: TIPO_BLOCO_ICON.texto, iconColorClass: TIPO_BLOCO_ICON_COR.texto },
+      ...presentes.map((t) => ({ key: t, label: TIPO_BLOCO_LABEL[t], icon: TIPO_BLOCO_ICON[t], iconColorClass: TIPO_BLOCO_ICON_COR[t] })),
+    ]
+    if (aula.questoes.length) {
+      abas.push({ key: 'questoes', label: `Questões (${aula.questoes.length})`, icon: FileQuestion, iconColorClass: 'text-navy' })
+    }
     return abas
   }, [aula])
 
@@ -75,7 +81,7 @@ export default function AulaDetail() {
 
       {abasDisponiveis.length > 1 && (
         <div className="mb-4 -mt-2">
-          <Tabs tabs={abasDisponiveis} active={aba} onChange={setAba} />
+          <Tabs tabs={abasDisponiveis} active={aba} onChange={setAba} variant="pill" />
         </div>
       )}
 

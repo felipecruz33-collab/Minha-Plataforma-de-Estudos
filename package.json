@@ -11,7 +11,7 @@
     "typecheck:api": "tsc -p api/tsconfig.json"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.68.0",
+    "@google/genai": "^2.18.0",
     "@supabase/supabase-js": "^2.45.4",
     "lucide-react": "^0.454.0",
     "pdfjs-dist": "^4.7.76",
