@@ -238,33 +238,46 @@ export class SupabaseRepository implements DataRepository {
     }
   }
 
-  async getPerfil(userId: string, email: string): Promise<Perfil> {
-    const { data, error } = await this.db().from('profiles').select('*').eq('id', userId).maybeSingle()
-    if (error) throw error
+  /**
+   * O admin é considerado true se profiles.is_admin OU a tabela user_roles
+   * disserem que sim (0005_user_roles.sql) — duas fontes independentes,
+   * verificadas separadamente aqui porque a RPC tem sua própria política de
+   * segurança e não depende de o SELECT em profiles ter vindo "certo".
+   */
+  private async checarPapelAdmin(userId: string): Promise<boolean> {
+    const { data, error } = await this.db().rpc('has_role', { _user_id: userId, _role: 'admin' })
+    if (error) {
+      console.error('has_role() falhou:', error)
+      return false
+    }
+    return Boolean(data)
+  }
+
+  private async hydratePerfil(userId: string, email: string, data: any | null): Promise<Perfil> {
+    const isAdminViaRole = await this.checarPapelAdmin(userId)
     if (!data) {
-      return { userId, email, nome: '', isAdmin: false, isPremium: false, favoritos: [] }
+      return { userId, email, nome: '', isAdmin: isAdminViaRole, isPremium: false, favoritos: [] }
     }
     return {
       userId: data.id,
       email: data.email,
       nome: data.nome ?? '',
-      isAdmin: data.is_admin,
+      isAdmin: Boolean(data.is_admin) || isAdminViaRole,
       isPremium: data.is_premium,
       favoritos: data.favoritos ?? [],
     }
   }
 
+  async getPerfil(userId: string, email: string): Promise<Perfil> {
+    const { data, error } = await this.db().from('profiles').select('*').eq('id', userId).maybeSingle()
+    if (error) throw error
+    return this.hydratePerfil(userId, email, data)
+  }
+
   async atualizarNome(userId: string, nome: string): Promise<Perfil> {
     const { data, error } = await this.db().from('profiles').update({ nome }).eq('id', userId).select().single()
     if (error) throw error
-    return {
-      userId: data.id,
-      email: data.email,
-      nome: data.nome ?? '',
-      isAdmin: data.is_admin,
-      isPremium: data.is_premium,
-      favoritos: data.favoritos ?? [],
-    }
+    return this.hydratePerfil(userId, data.email, data)
   }
 
   async listPerfis(): Promise<Perfil[]> {
