@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { useAuth } from '../lib/auth/AuthContext'
+import { usingSupabase } from '../lib/repo'
 
 export default function Perfil() {
   const { perfil, atualizarNome } = useAuth()
@@ -78,6 +79,32 @@ export default function Perfil() {
             )}
           </Button>
         </form>
+      </Card>
+
+      <Card className="mt-4">
+        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Diagnóstico técnico</p>
+        <dl className="space-y-1 text-xs text-slate-500">
+          <div className="flex justify-between gap-2">
+            <dt>Backend</dt>
+            <dd className="font-mono">{usingSupabase ? 'Supabase' : 'Local (sem Supabase)'}</dd>
+          </div>
+          <div className="flex justify-between gap-2">
+            <dt>ID do usuário</dt>
+            <dd className="break-all font-mono">{perfil.userId}</dd>
+          </div>
+          <div className="flex justify-between gap-2">
+            <dt>E-mail</dt>
+            <dd className="font-mono">{perfil.email}</dd>
+          </div>
+          <div className="flex justify-between gap-2">
+            <dt>isAdmin</dt>
+            <dd className="font-mono">{String(perfil.isAdmin)}</dd>
+          </div>
+          <div className="flex justify-between gap-2">
+            <dt>isPremium</dt>
+            <dd className="font-mono">{String(perfil.isPremium)}</dd>
+          </div>
+        </dl>
       </Card>
     </div>
   )
