@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { AulaGeradaSchema, TIPOS_BLOCO_IA } from '../src/lib/aiSchema'
-import { SYSTEM_PROMPT_GERAR_AULA } from '../src/lib/aiPrompt'
+import { AulaGeradaSchema, TIPOS_BLOCO_IA } from '../src/lib/aiSchema.js'
+import { SYSTEM_PROMPT_GERAR_AULA } from '../src/lib/aiPrompt.js'
 
 // Texto extraído do PDF vem em base64 do cliente; ~4.4MB é o limite prático
 // de corpo de requisição em funções serverless da Vercel — fica com folga.
