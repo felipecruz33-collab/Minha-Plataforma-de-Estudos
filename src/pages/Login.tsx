@@ -1,11 +1,14 @@
+import { Download, Share } from 'lucide-react'
 import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { Logo } from '../components/layout/Logo'
 import { Button } from '../components/ui/Button'
 import { useAuth } from '../lib/auth/AuthContext'
+import { usePwaInstall } from '../lib/hooks/usePwaInstall'
 
 export default function Login() {
   const { user, signIn, signUp } = useAuth()
+  const { canInstall, showIOSInstructions, install } = usePwaInstall()
   const [modo, setModo] = useState<'entrar' | 'criar'>('entrar')
   const [nome, setNome] = useState('')
   const [email, setEmail] = useState('')
@@ -38,6 +41,25 @@ export default function Login() {
           <p className="text-sm text-slate-400">de Estudos</p>
         </div>
       </div>
+
+      {canInstall && (
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={install}
+          className="mb-6 w-full max-w-sm !bg-white/10 !text-white hover:!bg-white/20"
+        >
+          <Download className="h-4 w-4" strokeWidth={1.75} />
+          Baixar aplicativo
+        </Button>
+      )}
+
+      {showIOSInstructions && (
+        <p className="mb-6 flex w-full max-w-sm items-center gap-2 rounded-lg bg-white/10 px-4 py-2.5 text-xs text-slate-300">
+          <Share className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+          Pra instalar: toque em Compartilhar e depois em "Adicionar à Tela de Início"
+        </p>
+      )}
 
       <form onSubmit={onSubmit} className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
         <h1 className="mb-1 text-lg font-bold text-navy">{modo === 'entrar' ? 'Entrar' : 'Criar conta'}</h1>
