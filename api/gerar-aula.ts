@@ -1,17 +1,22 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import Anthropic from '@anthropic-ai/sdk'
+import { ApiError, GoogleGenAI } from '@google/genai'
 import { AulaGeradaSchema, TIPOS_BLOCO_IA } from '../src/lib/aiSchema'
 import { SYSTEM_PROMPT_GERAR_AULA } from '../src/lib/aiPrompt'
 
 // Texto extraído do PDF vem em base64 do cliente; ~4.4MB é o limite prático
 // de corpo de requisição em funções serverless da Vercel — fica com folga.
+// Também fica bem abaixo da cota de tokens por minuto do tier gratuito do Gemini.
 const MAX_TEXTO_CHARS = 350_000
 
-// A versão instalada do SDK (0.68.0) não tem `messages.parse`/`output_config`
-// (structured outputs), então a saída estruturada é obtida forçando uma
-// chamada de tool com JSON Schema — padrão suportado desde sempre na API.
-const AULA_TOOL_NAME = 'gerar_aula'
-const AULA_INPUT_SCHEMA: Anthropic.Tool.InputSchema = {
+// Alias que a Google mantém sempre apontando pro Flash mais recente — evita
+// fixar uma versão específica (ex.: "gemini-3-flash") que pode ser descontinuada.
+// O Flash é o modelo recomendado no tier gratuito (Pro não tem cota grátis).
+const MODEL = 'gemini-flash-latest'
+
+// JSON Schema padrão (não o formato "Schema" com tipos em maiúsculo do SDK) —
+// o Gemini aceita via `responseJsonSchema`, que suporta additionalProperties
+// (precisa pro "altExp", que tem uma chave por alternativa A-E).
+const AULA_JSON_SCHEMA = {
   type: 'object',
   properties: {
     materia: { type: 'string', minLength: 1 },
@@ -75,11 +80,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
     res.status(500).json({
       ok: false,
-      error: 'IA não configurada no servidor (falta ANTHROPIC_API_KEY nas variáveis de ambiente do Vercel).',
+      error: 'IA não configurada no servidor (falta GEMINI_API_KEY nas variáveis de ambiente do Vercel).',
     })
     return
   }
@@ -103,7 +108,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const client = new Anthropic({ apiKey })
+    const ai = new GoogleGenAI({ apiKey })
 
     const userText = [
       materiaOverride?.trim() ? `Matéria sugerida pelo usuário (use este nome exato): ${materiaOverride.trim()}` : null,
@@ -114,38 +119,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .filter(Boolean)
       .join('\n\n')
 
-    const response = await client.messages.create({
-      model: 'claude-opus-5',
-      max_tokens: 24000,
-      system: SYSTEM_PROMPT_GERAR_AULA,
-      messages: [{ role: 'user', content: userText }],
-      tools: [
-        {
-          name: AULA_TOOL_NAME,
-          description: 'Registra a aula estruturada (teoria + questões) gerada a partir do texto do PDF.',
-          input_schema: AULA_INPUT_SCHEMA,
-        },
-      ],
-      tool_choice: { type: 'tool', name: AULA_TOOL_NAME },
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: userText,
+      config: {
+        systemInstruction: SYSTEM_PROMPT_GERAR_AULA,
+        responseMimeType: 'application/json',
+        responseJsonSchema: AULA_JSON_SCHEMA,
+        maxOutputTokens: 24000,
+      },
     })
 
-    if (response.stop_reason === 'max_tokens') {
+    const candidato = response.candidates?.[0]
+    if (candidato?.finishReason === 'MAX_TOKENS') {
       res.status(502).json({
         ok: false,
         error: 'A aula gerada ficou grande demais e foi cortada. Tente dividir o PDF em partes menores.',
       })
       return
     }
-
-    const toolUse = response.content.find(
-      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use' && block.name === AULA_TOOL_NAME,
-    )
-    if (!toolUse) {
-      res.status(502).json({ ok: false, error: 'A IA não devolveu um formato válido. Tente novamente.' })
+    if (candidato?.finishReason && candidato.finishReason !== 'STOP') {
+      res.status(502).json({ ok: false, error: `A IA não conseguiu gerar a aula (motivo: ${candidato.finishReason}).` })
       return
     }
 
-    const validado = AulaGeradaSchema.safeParse(toolUse.input)
+    const texto_resposta = response.text
+    if (!texto_resposta) {
+      res.status(502).json({ ok: false, error: 'A IA não devolveu nenhum conteúdo. Tente novamente.' })
+      return
+    }
+
+    let bruto: unknown
+    try {
+      bruto = JSON.parse(texto_resposta)
+    } catch {
+      res.status(502).json({ ok: false, error: 'A IA devolveu um JSON inválido. Tente novamente.' })
+      return
+    }
+
+    const validado = AulaGeradaSchema.safeParse(bruto)
     if (!validado.success) {
       console.error('gerar-aula: saída da IA não bateu com o schema:', validado.error.flatten())
       res.status(502).json({ ok: false, error: 'A IA devolveu dados em formato inesperado. Tente novamente.' })
@@ -155,6 +167,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(200).json({ ok: true, payload: validado.data })
   } catch (err) {
     console.error('gerar-aula falhou:', err)
+    if (err instanceof ApiError && err.status === 429) {
+      res.status(429).json({
+        ok: false,
+        error: 'Cota gratuita da IA esgotada por agora (limite do tier gratuito do Gemini). Tente novamente em alguns minutos.',
+      })
+      return
+    }
     const mensagem = err instanceof Error ? err.message : 'Erro inesperado ao gerar a aula.'
     res.status(502).json({ ok: false, error: mensagem })
   }
