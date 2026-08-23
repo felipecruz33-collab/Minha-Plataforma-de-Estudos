@@ -14,6 +14,7 @@ interface AuthContextValue {
   refreshPerfil: () => Promise<void>
   toggleFavorito: (questaoId: string) => Promise<void>
   atualizarNome: (nome: string) => Promise<void>
+  salvarChaveGemini: (chave: string | null) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -144,9 +145,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user],
   )
 
+  const salvarChaveGemini = useCallback(
+    async (chave: string | null) => {
+      if (!user) return
+      const p = await repo.salvarChaveGemini(user.id, chave)
+      setPerfil(p)
+    },
+    [user],
+  )
+
   const value = useMemo(
-    () => ({ loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome }),
-    [loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome],
+    () => ({ loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome, salvarChaveGemini }),
+    [loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome, salvarChaveGemini],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

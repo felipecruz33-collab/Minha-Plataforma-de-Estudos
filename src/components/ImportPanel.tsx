@@ -1,5 +1,6 @@
-import { AlertTriangle, CheckCircle2, FileJson, FileUp } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, FileJson, FileUp, KeyRound } from 'lucide-react'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth/AuthContext'
 import { repo } from '../lib/repo'
 import { validateAulaImport } from '../lib/schema'
@@ -12,7 +13,7 @@ interface ImportPanelProps {
 }
 
 export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
-  const { user } = useAuth()
+  const { user, perfil } = useAuth()
   const [aba, setAba] = useState<'pdf' | 'json'>('pdf')
   const [escolhaMateria, setEscolhaMateria] = useState<EscolhaMateria>({ modo: 'auto' })
   const [busy, setBusy] = useState(false)
@@ -94,7 +95,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
     try {
       const nomeEscolhido = resolverNomeMateria(escolhaMateria)
       const { gerarAulaViaIA } = await import('../lib/ai/pdfToAula')
-      const payload = await gerarAulaViaIA(file, nomeEscolhido)
+      const payload = await gerarAulaViaIA(file, nomeEscolhido, perfil?.chaveGemini)
       await importarPayload(payload, file.name, true)
     } catch (e) {
       setErrors([e instanceof Error ? e.message : 'Erro inesperado ao gerar a aula a partir do PDF.'])
@@ -141,6 +142,16 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
               as questões automaticamente — confira o resultado antes de confiar 100%, e veja detalhes em
               "Gerações IA" após importar.
             </p>
+            {!perfil?.chaveGemini && (
+              <p className="mb-2 flex items-start gap-2 rounded-lg bg-blue-50 p-3 text-xs text-blue-800">
+                <KeyRound className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                Isso usa uma chave de IA compartilhada, que pode ficar sobrecarregada em horários de pico.{' '}
+                <Link to="/perfil" className="font-semibold underline">
+                  Adicione sua própria chave gratuita em Perfil
+                </Link>{' '}
+                pra ter sua própria cota, sem fila com outros usuários.
+              </p>
+            )}
             <label className="flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed border-slate-300 p-8 text-center hover:border-brand-blue">
               <FileUp className="h-8 w-8 text-slate-400" strokeWidth={1.5} />
               <span className="text-sm font-medium text-slate-600">Toque para escolher um PDF</span>

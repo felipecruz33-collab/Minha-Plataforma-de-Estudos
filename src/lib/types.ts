@@ -135,6 +135,9 @@ export interface Perfil {
   isAdmin: boolean
   isPremium: boolean
   favoritos: string[]
+  /** Chave própria e opcional da API do Gemini (gratuita) — usada no lugar da chave
+   *  compartilhada da plataforma no "PDF com IA", pra não competir por cota com outros usuários. */
+  chaveGemini: string | null
 }
 
 /** Estrutura exata de importação/geração (Seção 6). */

@@ -256,7 +256,7 @@ export class SupabaseRepository implements DataRepository {
   private async hydratePerfil(userId: string, email: string, data: any | null): Promise<Perfil> {
     const isAdminViaRole = await this.checarPapelAdmin(userId)
     if (!data) {
-      return { userId, email, nome: '', isAdmin: isAdminViaRole, isPremium: false, favoritos: [] }
+      return { userId, email, nome: '', isAdmin: isAdminViaRole, isPremium: false, favoritos: [], chaveGemini: null }
     }
     return {
       userId: data.id,
@@ -265,6 +265,7 @@ export class SupabaseRepository implements DataRepository {
       isAdmin: Boolean(data.is_admin) || isAdminViaRole,
       isPremium: data.is_premium,
       favoritos: data.favoritos ?? [],
+      chaveGemini: data.chave_gemini ?? null,
     }
   }
 
@@ -292,6 +293,7 @@ export class SupabaseRepository implements DataRepository {
       isAdmin: p.is_admin,
       isPremium: p.is_premium,
       favoritos: p.favoritos ?? [],
+      chaveGemini: p.chave_gemini ?? null,
     }))
   }
 
@@ -316,7 +318,19 @@ export class SupabaseRepository implements DataRepository {
       isAdmin: data.is_admin,
       isPremium: data.is_premium,
       favoritos: data.favoritos ?? [],
+      chaveGemini: data.chave_gemini ?? null,
     }
+  }
+
+  async salvarChaveGemini(userId: string, chave: string | null): Promise<Perfil> {
+    const { data, error } = await this.db()
+      .from('profiles')
+      .update({ chave_gemini: chave })
+      .eq('id', userId)
+      .select()
+      .single()
+    if (error) throw error
+    return this.hydratePerfil(userId, data.email, data)
   }
 
   async exportBackup(userId: string): Promise<BackupData> {
