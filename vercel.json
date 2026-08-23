@@ -1,5 +1,8 @@
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }],
+  "functions": {
+    "api/gerar-aula.ts": { "maxDuration": 60 }
+  },
   "headers": [
     {
       "source": "/sw.js",

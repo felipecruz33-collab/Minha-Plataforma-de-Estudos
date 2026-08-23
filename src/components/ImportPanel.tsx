@@ -93,8 +93,8 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
     setSucesso(null)
     try {
       const nomeEscolhido = resolverNomeMateria(escolhaMateria)
-      const { gerarAulaViaPdfStub } = await import('../lib/ai/pdfToAula')
-      const payload = await gerarAulaViaPdfStub(file, nomeEscolhido)
+      const { gerarAulaViaIA } = await import('../lib/ai/pdfToAula')
+      const payload = await gerarAulaViaIA(file, nomeEscolhido)
       await importarPayload(payload, file.name, true)
     } catch (e) {
       setErrors([e instanceof Error ? e.message : 'Erro inesperado ao gerar a aula a partir do PDF.'])
@@ -137,8 +137,9 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
           <div>
             <p className="mb-2 flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
               <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              PDFs longos podem demorar para processar. Nesta versão, a extração é automática mas ainda não
-              identifica questões — veja detalhes em "Gerações IA" após importar.
+              PDFs longos podem demorar até um minuto para processar. A IA lê o PDF inteiro e monta a teoria e
+              as questões automaticamente — confira o resultado antes de confiar 100%, e veja detalhes em
+              "Gerações IA" após importar.
             </p>
             <label className="flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed border-slate-300 p-8 text-center hover:border-brand-blue">
               <FileUp className="h-8 w-8 text-slate-400" strokeWidth={1.5} />
