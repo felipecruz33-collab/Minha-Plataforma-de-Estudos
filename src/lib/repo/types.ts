@@ -47,6 +47,8 @@ export interface DataRepository {
   getPerfil(userId: string, email: string): Promise<Perfil>
   setPremium(userId: string, value: boolean): Promise<void>
   toggleFavorito(userId: string, questaoId: string): Promise<Perfil>
+  /** Só retorna dados úteis para o administrador — ver RLS em 0003_admin_lista_usuarios.sql. */
+  listPerfis(): Promise<Perfil[]>
 
   exportBackup(userId: string): Promise<BackupData>
   importBackup(userId: string, data: BackupData): Promise<void>

@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom'
+import { useAuth } from '../../lib/auth/AuthContext'
 import { Logo } from './Logo'
-import { NAV_ITEMS } from '../../lib/nav'
+import { ADMIN_NAV_ITEM, NAV_ITEMS } from '../../lib/nav'
 
 interface SidebarProps {
   open: boolean
@@ -8,6 +9,9 @@ interface SidebarProps {
 }
 
 export function Sidebar({ open, onClose }: SidebarProps) {
+  const { perfil } = useAuth()
+  const items = perfil?.isAdmin ? [...NAV_ITEMS, ADMIN_NAV_ITEM] : NAV_ITEMS
+
   return (
     <>
       {open && (
@@ -30,7 +34,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           </div>
         </div>
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
-          {NAV_ITEMS.map((item) => (
+          {items.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}

@@ -11,6 +11,7 @@ import {
   Sparkles,
   Star,
   Upload,
+  Users,
   XCircle,
   type LucideIcon,
 } from 'lucide-react'
@@ -37,3 +38,6 @@ export const NAV_ITEMS: NavItem[] = [
   { path: '/geracoes', label: 'Gerações IA', icon: Bot },
   { path: '/premium', label: 'Premium', icon: Crown },
 ]
+
+/** 14ª entrada, exclusiva do administrador — não conta como uma das 13 telas fixas. */
+export const ADMIN_NAV_ITEM: NavItem = { path: '/usuarios', label: 'Usuários', icon: Users }

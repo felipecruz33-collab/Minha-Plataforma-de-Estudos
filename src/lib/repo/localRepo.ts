@@ -196,6 +196,11 @@ export class LocalRepository implements DataRepository {
     return s.perfis[userId]
   }
 
+  async listPerfis(): Promise<Perfil[]> {
+    const s = load()
+    return Object.values(s.perfis)
+  }
+
   async setPremium(userId: string, value: boolean): Promise<void> {
     const s = load()
     if (s.perfis[userId]) {

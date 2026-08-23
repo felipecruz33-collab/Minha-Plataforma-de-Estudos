@@ -1,14 +1,17 @@
 import { useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
-import { NAV_ITEMS } from '../../lib/nav'
+import { useAuth } from '../../lib/auth/AuthContext'
+import { ADMIN_NAV_ITEM, NAV_ITEMS } from '../../lib/nav'
 import { Header } from './Header'
 import { Sidebar } from './Sidebar'
 
 export function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const location = useLocation()
+  const { perfil } = useAuth()
 
-  const current = NAV_ITEMS.find((item) => (item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path)))
+  const items = perfil?.isAdmin ? [...NAV_ITEMS, ADMIN_NAV_ITEM] : NAV_ITEMS
+  const current = items.find((item) => (item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path)))
 
   return (
     <div className="min-h-screen bg-white lg:flex">
