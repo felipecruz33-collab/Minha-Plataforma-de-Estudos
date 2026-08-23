@@ -135,30 +135,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .filter(Boolean)
       .join('\n\n')
 
-    const geminiRes = await fetch(GEMINI_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
+    const corpoRequisicao = JSON.stringify({
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT_GERAR_AULA }] },
+      contents: [{ role: 'user', parts: [{ text: userText }] }],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseJsonSchema: AULA_JSON_SCHEMA,
+        maxOutputTokens: 24000,
       },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT_GERAR_AULA }] },
-        contents: [{ role: 'user', parts: [{ text: userText }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseJsonSchema: AULA_JSON_SCHEMA,
-          maxOutputTokens: 24000,
-        },
-      }),
     })
 
-    const dados = (await geminiRes.json()) as GeminiResponse
+    // O modelo Flash gratuito às vezes devolve 503 "high demand" em pico de
+    // uso — geralmente passa em poucos segundos, então tenta de novo antes
+    // de desistir (sem exagerar, pra caber no tempo máximo da função).
+    let geminiRes: Response
+    let dados: GeminiResponse
+    const esperasEntreTentativas = [0, 4000, 10000]
+    do {
+      const espera = esperasEntreTentativas.shift()!
+      if (espera) await new Promise((r) => setTimeout(r, espera))
+      geminiRes = await fetch(GEMINI_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: corpoRequisicao,
+      })
+      dados = (await geminiRes.json()) as GeminiResponse
+    } while (geminiRes.status === 503 && esperasEntreTentativas.length > 0)
 
     if (!geminiRes.ok) {
       if (geminiRes.status === 429) {
         res.status(429).json({
           ok: false,
           error: 'Cota gratuita da IA esgotada por agora (limite do tier gratuito do Gemini). Tente novamente em alguns minutos.',
+        })
+        return
+      }
+      if (geminiRes.status === 503) {
+        res.status(503).json({
+          ok: false,
+          error: 'O modelo de IA está com alta demanda no Google agora (já tentei de novo automaticamente). Espera alguns minutos e tenta de novo.',
         })
         return
       }
