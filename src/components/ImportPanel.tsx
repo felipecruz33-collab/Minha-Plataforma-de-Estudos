@@ -17,17 +17,30 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   const [aba, setAba] = useState<'pdf' | 'json'>('pdf')
   const [escolhaMateria, setEscolhaMateria] = useState<EscolhaMateria>({ modo: 'auto' })
   const [busy, setBusy] = useState(false)
+  const [etapa, setEtapa] = useState<string | null>(null)
   const [errors, setErrors] = useState<string[]>([])
   const [sucesso, setSucesso] = useState<string | null>(null)
 
   if (!user) return null
 
+  /** Valida e salva uma única aula — usado tanto pelo .json manual quanto, em loop, pelo PDF (que pode gerar mais de uma). */
+  async function validarEImportarUma(
+    payload: unknown,
+    nomeEscolhido: string | null | undefined,
+  ): Promise<{ ok: true; tituloAula: string; materiaFinal: string } | { ok: false; errors: string[] }> {
+    const result = validateAulaImport(payload)
+    if (!result.valid || !result.data) return { ok: false, errors: result.errors }
+    if (nomeEscolhido) result.data.materia = nomeEscolhido
+    const aula = await repo.upsertAula(user!.id, result.data, { isBiblioteca })
+    return { ok: true, tituloAula: aula.titulo, materiaFinal: result.data.materia }
+  }
+
   async function importarPayload(payload: unknown, nomeArquivo: string, viaIA: boolean) {
     const nomeEscolhido = resolverNomeMateria(escolhaMateria)
+    const r = await validarEImportarUma(payload, nomeEscolhido)
 
-    const result = validateAulaImport(payload)
-    if (!result.valid || !result.data) {
-      setErrors(result.errors)
+    if (!r.ok) {
+      setErrors(r.errors)
       setSucesso(null)
       if (viaIA) {
         await repo.addGeracao({
@@ -36,23 +49,20 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
           materia: nomeEscolhido || '(detecção automática)',
           aulaTitulo: '—',
           status: 'erro',
-          mensagem: result.errors.slice(0, 3).join('; '),
+          mensagem: r.errors.slice(0, 3).join('; '),
         })
       }
       return
     }
 
-    if (nomeEscolhido) result.data.materia = nomeEscolhido
-
-    const aula = await repo.upsertAula(user!.id, result.data, { isBiblioteca })
     setErrors([])
-    setSucesso(`Aula "${aula.titulo}" salva em "${result.data.materia}".`)
+    setSucesso(`Aula "${r.tituloAula}" salva em "${r.materiaFinal}".`)
     if (viaIA) {
       await repo.addGeracao({
         userId: user!.id,
         nomeArquivo,
-        materia: result.data.materia,
-        aulaTitulo: aula.titulo,
+        materia: r.materiaFinal,
+        aulaTitulo: r.tituloAula,
         status: 'concluido',
       })
     }
@@ -92,23 +102,59 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
     setBusy(true)
     setErrors([])
     setSucesso(null)
+    const nomeEscolhido = resolverNomeMateria(escolhaMateria)
     try {
-      const nomeEscolhido = resolverNomeMateria(escolhaMateria)
+      setEtapa('Lendo o PDF…')
       const { gerarAulaViaIA } = await import('../lib/ai/pdfToAula')
-      const payload = await gerarAulaViaIA(file, nomeEscolhido, perfil?.chaveGemini)
-      await importarPayload(payload, file.name, true)
+      setEtapa('Gerando a aula com IA (pode levar até 1 minuto)…')
+      const payloads = await gerarAulaViaIA(file, nomeEscolhido, perfil?.chaveGemini)
+
+      setEtapa(payloads.length > 1 ? `Salvando ${payloads.length} aulas…` : 'Salvando aula…')
+      const titulosSalvos: string[] = []
+      const errosAcumulados: string[] = []
+      let materiaFinal = ''
+      for (const payload of payloads) {
+        const r = await validarEImportarUma(payload, nomeEscolhido)
+        if (r.ok) {
+          titulosSalvos.push(r.tituloAula)
+          materiaFinal = r.materiaFinal
+          await repo.addGeracao({ userId: user!.id, nomeArquivo: file.name, materia: r.materiaFinal, aulaTitulo: r.tituloAula, status: 'concluido' })
+        } else {
+          errosAcumulados.push(...r.errors)
+          await repo.addGeracao({
+            userId: user!.id,
+            nomeArquivo: file.name,
+            materia: nomeEscolhido || '(detecção automática)',
+            aulaTitulo: '—',
+            status: 'erro',
+            mensagem: r.errors.slice(0, 3).join('; '),
+          })
+        }
+      }
+
+      setErrors(errosAcumulados)
+      if (titulosSalvos.length > 0) {
+        setSucesso(
+          titulosSalvos.length === 1
+            ? `Aula "${titulosSalvos[0]}" salva em "${materiaFinal}".`
+            : `${titulosSalvos.length} aulas salvas em "${materiaFinal}": ${titulosSalvos.join(', ')}.`,
+        )
+        onImported?.()
+      }
     } catch (e) {
-      setErrors([e instanceof Error ? e.message : 'Erro inesperado ao gerar a aula a partir do PDF.'])
+      const mensagem = e instanceof Error ? e.message : 'Erro inesperado ao gerar a aula a partir do PDF.'
+      setErrors([mensagem])
       await repo.addGeracao({
         userId: user!.id,
         nomeArquivo: file.name,
-        materia: resolverNomeMateria(escolhaMateria) || '(detecção automática)',
+        materia: nomeEscolhido || '(detecção automática)',
         aulaTitulo: '—',
         status: 'erro',
-        mensagem: e instanceof Error ? e.message : 'Erro inesperado.',
+        mensagem,
       })
     } finally {
       setBusy(false)
+      setEtapa(null)
     }
   }
 
@@ -138,9 +184,9 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
           <div>
             <p className="mb-2 flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
               <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              PDFs longos podem demorar até um minuto para processar. A IA lê o PDF inteiro e monta a teoria e
-              as questões automaticamente — confira o resultado antes de confiar 100%, e veja detalhes em
-              "Gerações IA" após importar.
+              PDFs longos podem demorar mais de um minuto para processar. A IA lê o PDF inteiro e monta a teoria
+              e as questões automaticamente — se o PDF tiver mais de uma aula, cada uma é criada separadamente.
+              Confira o resultado antes de confiar 100%, e veja detalhes em "Gerações IA" após importar.
             </p>
             {!perfil?.chaveGemini && (
               <p className="mb-2 flex items-start gap-2 rounded-lg bg-blue-50 p-3 text-xs text-blue-800">
@@ -186,7 +232,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
           </label>
         )}
 
-        {busy && <p className="text-sm text-slate-400">Processando…</p>}
+        {busy && <p className="text-sm text-slate-400">{etapa ?? 'Processando…'}</p>}
 
         {sucesso && (
           <p className="flex items-start gap-2 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">

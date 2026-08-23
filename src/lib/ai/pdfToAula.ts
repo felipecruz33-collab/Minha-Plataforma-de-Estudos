@@ -19,12 +19,16 @@ async function extractText(file: File): Promise<string[]> {
 
 /**
  * "PDF com IA" (Seção 6.3) — extrai o texto do PDF no navegador (pdf.js) e
- * manda pra função serverless `api/gerar-aula.ts`, que chama a API da Claude
- * com o contrato da Seção 6 como saída estruturada. O resultado ainda passa
- * por `validateAulaImport` no ImportPanel, igual a qualquer importação de
- * .json — a IA pode errar, a validação é quem decide se entra na biblioteca.
+ * manda pra função serverless `api/gerar-aula.ts`, que chama o Gemini pra
+ * produzir um JSON semântico (sem HTML), compila esse JSON no mesmo formato
+ * que o importador de .json manual usa (`src/lib/lessonCompiler.ts`) e já
+ * revalida contra o schema final antes de devolver. Mesmo assim, o resultado
+ * ainda passa por `validateAulaImport` no ImportPanel, igual a qualquer
+ * importação de .json — a IA pode errar, a validação é quem decide se entra
+ * na biblioteca. Um PDF com mais de uma aula (ex.: "Aula 01", "Aula 02")
+ * devolve uma entrada por aula.
  */
-export async function gerarAulaViaIA(file: File, materiaOverride?: string, chaveUsuario?: string | null): Promise<AulaImportPayload> {
+export async function gerarAulaViaIA(file: File, materiaOverride?: string, chaveUsuario?: string | null): Promise<AulaImportPayload[]> {
   const paginas = await extractText(file)
   const texto = paginas.join('\n\n').trim()
 
@@ -50,8 +54,8 @@ export async function gerarAulaViaIA(file: File, materiaOverride?: string, chave
     throw new Error('Endpoint de IA indisponível neste ambiente (resposta não veio em JSON).')
   }
 
-  const dados = (await resposta.json()) as { ok: boolean; payload?: AulaImportPayload; error?: string }
-  if (!resposta.ok || !dados.ok || !dados.payload) {
+  const dados = (await resposta.json()) as { ok: boolean; payload?: AulaImportPayload[]; error?: string }
+  if (!resposta.ok || !dados.ok || !dados.payload?.length) {
     throw new Error(dados.error || 'Não foi possível gerar a aula a partir deste PDF.')
   }
 
