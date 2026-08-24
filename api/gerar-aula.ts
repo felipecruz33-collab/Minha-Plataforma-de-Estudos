@@ -202,11 +202,14 @@ async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string): Promise
   return cfg.provedor === 'gemini' ? chamarGemini(cfg.chave, promptTexto) : chamarGroq(cfg.chave, promptTexto)
 }
 
-// Tenta cada provedor/chave da lista em ordem, passando pro próximo só
-// quando o anterior devolveu 503 (alta demanda) mesmo após suas tentativas
-// internas — outros erros (429 de cota, 400 etc.) não acionam o próximo, pois
-// não é isso que resolveria o problema. Devolve também com qual configuração
-// deu certo, pra reusá-la no eventual reparo em vez de recomeçar a fila do zero.
+// Tenta cada provedor/chave da lista em ordem, passando pro próximo quando o
+// anterior devolveu 503 (alta demanda) ou 429 (cota esgotada) — os dois são
+// por chave/conta, então trocar de chave/provedor pode resolver os dois
+// (diferente de um erro 400, por exemplo, que se repetiria em qualquer
+// chave). Devolve também com qual configuração deu certo, pra reusá-la no
+// eventual reparo em vez de recomeçar a fila do zero.
+const STATUS_TENTA_PROXIMO = new Set([429, 503])
+
 async function chamarComReserva(
   provedores: ProvedorConfig[],
   promptTexto: string,
@@ -214,7 +217,7 @@ async function chamarComReserva(
   let ultima: { tentativa: Tentativa; provedorUsado: ProvedorConfig } | undefined
   for (const cfg of provedores) {
     const tentativa = await chamarProvedor(cfg, promptTexto)
-    if (tentativa.res.status !== 503) {
+    if (!STATUS_TENTA_PROXIMO.has(tentativa.res.status)) {
       return { tentativa, provedorUsado: cfg }
     }
     ultima = { tentativa, provedorUsado: cfg }
@@ -322,11 +325,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.status(429).json({
           ok: false,
           error:
-            provedorUsado.provedor === 'gemini'
-              ? chaveUsuario
-                ? 'Cota gratuita da sua chave do Gemini esgotada por agora. Tente novamente em alguns minutos.'
-                : 'Cota gratuita compartilhada do Gemini esgotada por agora. Adicione sua própria chave grátis em "Perfil" pra não depender dela, ou tente de novo mais tarde.'
-              : 'Cota gratuita do provedor de reserva (Groq) esgotada por agora. Tente novamente mais tarde.',
+            provedores.length > 1
+              ? 'Todas as chaves/provedores de IA configurados estão sem cota gratuita agora (já tentei todos automaticamente, incluindo a reserva). Tente de novo mais tarde.'
+              : provedorUsado.provedor === 'gemini'
+                ? chaveUsuario
+                  ? 'Cota gratuita da sua chave do Gemini esgotada por agora. Tente novamente em alguns minutos.'
+                  : 'Cota gratuita compartilhada do Gemini esgotada por agora. Adicione sua própria chave grátis em "Perfil" pra não depender dela, ou tente de novo mais tarde.'
+                : 'Cota gratuita do provedor de reserva (Groq) esgotada por agora. Tente novamente mais tarde.',
         })
         return
       }
