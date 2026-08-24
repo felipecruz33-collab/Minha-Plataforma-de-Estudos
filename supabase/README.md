@@ -22,6 +22,7 @@ desenvolvimento/demonstração sem backend.
    - `migrations/0010_aula_ordem.sql`
    - `migrations/0011_biblioteca_premium.sql`
    - `migrations/0012_admin_premium_e_exclusao.sql`
+   - `migrations/0013_email_cadastrado.sql`
 3. Copie `.env.example` para `.env.local` e preencha:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
@@ -59,3 +60,18 @@ qualquer usuário autenticado, não só Premium/admin (`0009_biblioteca_aberta.s
 espelhando `BIBLIOTECA_ABERTA_PARA_TODOS` em `src/lib/premium.ts`) — é
 proposital, fase de crescimento antes da Play Store. Ver os comentários
 nesses dois arquivos pra reativar o bloqueio quando chegar a hora.
+
+## Recuperação de senha ("Esqueci minha senha")
+
+O link enviado por e-mail abre `/nova-senha` no app. Para o Supabase aceitar
+esse retorno, adicione o endereço em **Authentication → URL Configuration →
+Redirect URLs**:
+
+```
+https://SEU-APP.vercel.app/nova-senha
+```
+
+Sem isso, o link do e-mail é recusado com "redirect_to is not allowed".
+
+O texto do e-mail fica em **Authentication → Email Templates → Reset Password**
+e pode ser traduzido para português — o Supabase manda em inglês por padrão.
