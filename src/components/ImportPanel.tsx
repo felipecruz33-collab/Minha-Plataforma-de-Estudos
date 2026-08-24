@@ -251,18 +251,35 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
           <div>
             <p className="mb-2 flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
               <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              PDFs longos podem demorar mais de um minuto para processar. A IA lê o PDF inteiro e monta a teoria
-              e as questões automaticamente — se o PDF tiver mais de uma aula, cada uma é criada separadamente.
-              Confira o resultado antes de confiar 100%, e veja detalhes em "Gerações IA" após importar.
+              <span>
+                A IA lê o PDF e monta a teoria e as questões automaticamente, de forma <span className="font-semibold">objetiva</span>:
+                cobre os pontos principais e preserva todas as questões, com um comentário curto no gabarito. PDFs longos são
+                processados em etapas e podem levar alguns minutos. Confira o resultado antes de confiar 100%, e veja detalhes em
+                "Gerações IA" após importar.
+              </span>
+            </p>
+            <p className="mb-2 flex items-start gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+              <FileJson className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+              <span>
+                Quer material mais aprofundado — teoria expandida e comentário em <span className="font-semibold">cada</span>{' '}
+                alternativa? Monte o conteúdo como arquivo <span className="font-semibold">.json</span> e use a outra aba. O formato
+                aceita tudo isso; aqui no PDF a IA é mantida enxuta de propósito, pra conseguir entregar sem estourar o tempo do
+                servidor.
+              </span>
             </p>
             {!perfil?.chaveGemini && (
               <p className="mb-2 flex items-start gap-2 rounded-lg bg-blue-50 p-3 text-xs text-blue-800">
                 <KeyRound className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-                Isso usa uma chave de IA compartilhada, que pode ficar sobrecarregada em horários de pico.{' '}
-                <Link to="/perfil" className="font-semibold underline">
-                  Adicione sua própria chave gratuita em Perfil
-                </Link>{' '}
-                pra ter sua própria cota, sem fila com outros usuários.
+                {/* O texto precisa ficar num único filho: o container é flex, então
+                    cada trecho solto (e o link) viraria um item separado e o
+                    parágrafo quebraria em colunas estreitas. */}
+                <span>
+                  Isso usa uma chave de IA compartilhada, que pode ficar sobrecarregada em horários de pico.{' '}
+                  <Link to="/perfil" className="font-semibold underline">
+                    Adicione sua própria chave gratuita em Perfil
+                  </Link>{' '}
+                  pra ter sua própria cota, sem fila com outros usuários.
+                </span>
               </p>
             )}
             <label className="flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed border-slate-300 p-8 text-center hover:border-brand-blue">

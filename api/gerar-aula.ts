@@ -221,7 +221,12 @@ async function chamarGemini(apiKey: string, promptTexto: string, inicio: number)
     generationConfig: {
       responseMimeType: 'application/json',
       responseJsonSchema: AULA_GERADA_JSON_SCHEMA,
-      maxOutputTokens: 24000,
+      // Teto de escrita. Baixo de propósito: o tempo de resposta é ditado pelo
+      // tanto que a IA escreve, e 24000 tokens não terminavam dentro do minuto
+      // que a função tem. Se um trecho estourar esse teto, a saída vem
+      // marcada como cortada e o cliente racha aquele trecho sozinho — o que
+      // é bem melhor que estourar o tempo e não entregar nada.
+      maxOutputTokens: 8000,
     },
   })
 
@@ -265,7 +270,7 @@ async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, pro
       { role: 'user', content: promptTexto },
     ],
     response_format: { type: 'json_object' },
-    [cfg.campoMaxTokens]: 24000,
+    [cfg.campoMaxTokens]: 8000, // mesmo teto do Gemini — ver comentário em chamarGemini
   })
 
   const esperasEntreTentativas = [0, 3000]
@@ -367,10 +372,55 @@ function extrairResultado(t: Tentativa): ResultadoExtraido {
   }
 }
 
+/** Envia a resposta ao cliente. Injetado no processamento pra garantir uma única resposta por pedido. */
+type Responder = (status: number, corpo: unknown) => void
+
+// Momento em que a rede de segurança responde de qualquer jeito. Fica abaixo
+// dos 60s de maxDuration (vercel.json) com folga pra resposta ser enviada.
+const RESPOSTA_GARANTIDA_MS = 52_000
+
+/**
+ * Rede de segurança final contra FUNCTION_INVOCATION_TIMEOUT.
+ *
+ * Os tetos de tempo por requisição (`fetchComTeto`) já deveriam bastar, mas
+ * se alguma chamada externa travar de um jeito que o AbortController não
+ * interrompa, a Vercel encerra a função e o navegador recebe uma página HTML
+ * de erro — ilegível pro usuário e impossível de tratar no cliente. Aqui
+ * garantimos que SEMPRE sai um JSON nosso antes disso: se o prazo estourar,
+ * respondemos na hora e deixamos o trabalho pendente morrer sozinho.
+ */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  let respondido = false
+  const responder: Responder = (status, corpo) => {
+    if (respondido) return
+    respondido = true
+    res.status(status).json(corpo)
+  }
+
+  const salvaVidas = setTimeout(() => {
+    console.error('gerar-aula: rede de segurança acionada — respondendo antes do limite da plataforma')
+    responder(504, {
+      ok: false,
+      error:
+        'A IA não terminou de escrever dentro do tempo que o servidor tem por pedido. Tente de novo — se repetir, divida o PDF em partes menores.',
+      tamanhoExcessivo: true,
+    })
+  }, RESPOSTA_GARANTIDA_MS)
+
+  try {
+    await processarPedido(req, responder)
+  } catch (err) {
+    console.error('gerar-aula falhou (nível externo):', err)
+    responder(502, { ok: false, error: err instanceof Error ? err.message : 'Erro inesperado ao gerar a aula.' })
+  } finally {
+    clearTimeout(salvaVidas)
+  }
+}
+
+async function processarPedido(req: VercelRequest, responder: Responder) {
   const inicio = Date.now()
   if (req.method !== 'POST') {
-    res.status(405).json({ ok: false, error: 'Método não permitido.' })
+    responder(405, { ok: false, error: 'Método não permitido.' })
     return
   }
 
@@ -424,7 +474,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return true
   })
   if (provedores.length === 0) {
-    res.status(500).json({
+    responder(500, {
       ok: false,
       error:
         'IA não configurada. Adicione sua própria chave gratuita do Gemini em "Perfil", ou peça pro administrador configurar GEMINI_API_KEY no servidor.',
@@ -433,11 +483,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (!texto || typeof texto !== 'string' || !texto.trim()) {
-    res.status(400).json({ ok: false, error: 'Texto do PDF vazio ou ausente.' })
+    responder(400, { ok: false, error: 'Texto do PDF vazio ou ausente.' })
     return
   }
   if (texto.length > MAX_TEXTO_CHARS) {
-    res.status(400).json({
+    responder(400, {
       ok: false,
       error: `PDF muito extenso para processar de uma vez (${Math.round(texto.length / 1000)} mil caracteres). Tente dividir o PDF em partes menores.`,
       tamanhoExcessivo: true,
@@ -460,7 +510,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!iaRes.ok) {
       if (iaRes.status === 429) {
-        res.status(429).json({
+        responder(429, {
           ok: false,
           error:
             provedores.length > 1
@@ -474,7 +524,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return
       }
       if (iaRes.status === 503) {
-        res.status(503).json({
+        responder(503, {
           ok: false,
           error:
             provedores.length > 1
@@ -486,7 +536,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return
       }
       if (iaRes.status === 413) {
-        res.status(413).json({
+        responder(413, {
           ok: false,
           error:
             'Este PDF é grande demais para os provedores de reserva gratuitos configurados (eles têm um limite de tokens por minuto bem menor que o Gemini). Tente dividir o PDF em partes menores, ou tente de novo — se a chave principal do Gemini estiver disponível, ela costuma dar conta de PDFs maiores.',
@@ -499,7 +549,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // tem na Vercel. Antes essa situação matava a função no meio e
         // devolvia HTML ("resposta não veio em JSON"); agora desistimos
         // sozinhos a tempo e explicamos o que fazer.
-        res.status(504).json({
+        responder(504, {
           ok: false,
           error:
             'A IA demorou mais do que o tempo disponível para responder (o servidor tem 1 minuto por pedido). Isso costuma acontecer quando o trecho enviado é grande demais — dividir o PDF em mais partes resolve.',
@@ -509,18 +559,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const extraidoErro = extrairResultado(tentativa)
       console.error('gerar-aula: IA retornou erro:', provedorUsado.provedor, iaRes.status, extraidoErro.erroMensagem)
-      res.status(502).json({ ok: false, error: extraidoErro.erroMensagem || 'A IA recusou o pedido. Tente novamente.' })
+      responder(502, { ok: false, error: extraidoErro.erroMensagem || 'A IA recusou o pedido. Tente novamente.' })
       return
     }
 
     const extraido = extrairResultado(tentativa)
 
     if (extraido.bloqueadoMotivo) {
-      res.status(502).json({ ok: false, error: `A IA bloqueou o conteúdo (motivo: ${extraido.bloqueadoMotivo}).` })
+      responder(502, { ok: false, error: `A IA bloqueou o conteúdo (motivo: ${extraido.bloqueadoMotivo}).` })
       return
     }
     if (extraido.cortado) {
-      res.status(502).json({
+      responder(502, {
         ok: false,
         error: 'A aula gerada ficou grande demais e foi cortada. Tente dividir o PDF em partes menores.',
         tamanhoExcessivo: true,
@@ -530,7 +580,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let textoResposta = extraido.texto
     if (!textoResposta) {
-      res.status(502).json({ ok: false, error: 'A IA não devolveu nenhum conteúdo. Tente novamente.' })
+      responder(502, { ok: false, error: 'A IA não devolveu nenhum conteúdo. Tente novamente.' })
       return
     }
 
@@ -538,7 +588,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
       bruto = JSON.parse(textoResposta)
     } catch {
-      res.status(502).json({ ok: false, error: 'A IA devolveu um JSON inválido. Tente novamente.' })
+      responder(502, { ok: false, error: 'A IA devolveu um JSON inválido. Tente novamente.' })
       return
     }
 
@@ -555,7 +605,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // é melhor devolver um erro claro nosso do que arriscar estourar os
       // 60s da função e a Vercel devolver uma página de erro sem JSON.
       if (Date.now() - inicio > LIMITE_MS) {
-        res.status(502).json({
+        responder(502, {
           ok: false,
           error: 'A IA devolveu um formato inválido e não deu tempo de corrigir automaticamente (PDF grande demais). Tente de novo ou divida o PDF em partes menores.',
           tamanhoExcessivo: true,
@@ -574,20 +624,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const reparo = await chamarProvedor(provedorUsado, promptReparo, inicio)
       if (!reparo.res.ok) {
-        res.status(502).json({ ok: false, error: 'A IA devolveu um formato inválido e a correção automática falhou. Tente novamente.' })
+        responder(502, { ok: false, error: 'A IA devolveu um formato inválido e a correção automática falhou. Tente novamente.' })
         return
       }
       textoResposta = extrairResultado(reparo).texto
       try {
         bruto = JSON.parse(textoResposta)
       } catch {
-        res.status(502).json({ ok: false, error: 'A IA devolveu um JSON inválido mesmo após a correção. Tente novamente.' })
+        responder(502, { ok: false, error: 'A IA devolveu um JSON inválido mesmo após a correção. Tente novamente.' })
         return
       }
       validado = AulaGeradaIntermediateSchema.safeParse(bruto)
       if (!validado.success) {
         console.error('gerar-aula: saída ainda inválida após reparo:', validado.error.flatten())
-        res.status(502).json({ ok: false, error: 'A IA devolveu dados em formato inesperado, mesmo após tentar corrigir. Tente novamente.' })
+        responder(502, { ok: false, error: 'A IA devolveu dados em formato inesperado, mesmo após tentar corrigir. Tente novamente.' })
         return
       }
     }
@@ -603,14 +653,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'gerar-aula: aula compilada não bateu com o schema final:',
         falhas.map((f) => (!f.success ? f.error.flatten() : null)),
       )
-      res.status(502).json({ ok: false, error: 'Erro interno ao montar a aula. Tente novamente.' })
+      responder(502, { ok: false, error: 'Erro interno ao montar a aula. Tente novamente.' })
       return
     }
 
-    res.status(200).json({ ok: true, payload: aulasValidadas.map((v) => (v.success ? v.data : null)) })
+    responder(200, { ok: true, payload: aulasValidadas.map((v) => (v.success ? v.data : null)) })
   } catch (err) {
     console.error('gerar-aula falhou:', err)
     const mensagem = err instanceof Error ? err.message : 'Erro inesperado ao gerar a aula.'
-    res.status(502).json({ ok: false, error: mensagem })
+    responder(502, { ok: false, error: mensagem })
   }
 }
