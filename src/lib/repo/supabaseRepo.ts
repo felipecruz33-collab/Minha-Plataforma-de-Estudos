@@ -1,5 +1,6 @@
 import { supabase } from '../supabaseClient'
 import { ordenarAulas } from '../ordenarAulas'
+import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
 import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
 import type { BackupData, DataRepository, MateriaComContagem } from './types'
 
@@ -345,12 +346,16 @@ export class SupabaseRepository implements DataRepository {
     if (error) throw error
   }
 
-  async contarPdfsImportados(userId: string): Promise<number> {
-    const { data, error } = await this.db().from('geracoes_ia').select('nome_arquivo').eq('user_id', userId)
+  async pdfsNoPeriodo(userId: string, desdeISO: string): Promise<string[]> {
+    const { data, error } = await this.db()
+      .from('geracoes_ia')
+      .select('nome_arquivo, criado_em')
+      .eq('user_id', userId)
+      .gte('criado_em', desdeISO)
     if (error) throw error
-    // Arquivos distintos, não linhas: um PDF dividido em vários trechos gera
-    // uma linha por aula, e cobrar isso como vários PDFs seria mentira.
-    return new Set((data ?? []).map((g: { nome_arquivo: string }) => g.nome_arquivo)).size
+    return primeiraDataPorArquivo(
+      (data ?? []).map((g: { nome_arquivo: string; criado_em: string }) => ({ nome: g.nome_arquivo, data: g.criado_em })),
+    )
   }
 
   async toggleFavorito(userId: string, questaoId: string): Promise<Perfil> {

@@ -20,7 +20,7 @@ export function podeVerBiblioteca(perfil: Pick<Perfil, 'isPremium' | 'isAdmin'> 
 }
 
 /**
- * Quantos PDFs uma conta gratuita pode converter com a IA.
+ * Quantos PDFs uma conta gratuita pode converter com a IA a cada período.
  *
  * O limite existe porque cada conversão custa cota de IA de verdade — é o
  * único recurso do app que gasta dinheiro (ou a cota gratuita compartilhada)
@@ -29,15 +29,44 @@ export function podeVerBiblioteca(perfil: Pick<Perfil, 'isPremium' | 'isAdmin'> 
  */
 export const LIMITE_PDF_GRATIS = 3
 
+/** Em quantos dias a cota se renova. */
+export const JANELA_PDF_DIAS = 7
+
+const DIA_MS = 24 * 60 * 60 * 1000
+
+/** Início da janela que vale agora — tudo antes disso não conta mais. */
+export function inicioDaJanelaPdf(agora = new Date()): string {
+  return new Date(agora.getTime() - JANELA_PDF_DIAS * DIA_MS).toISOString()
+}
+
 export function temPremium(perfil: Pick<Perfil, 'isPremium' | 'isAdmin'> | null | undefined): boolean {
   return !!perfil?.isPremium || !!perfil?.isAdmin
 }
 
-/** Quantos PDFs ainda cabem na conta. `null` = sem limite (Premium/admin). */
-export function pdfsRestantes(
+/**
+ * Situação da cota de PDF a partir das datas de uso dentro da janela.
+ *
+ * A janela é DESLIZANTE, não um calendário fixo: cada PDF libera a própria
+ * vaga 7 dias depois de ter sido usado. É mais justo do que zerar tudo numa
+ * data comum — quem usou 1 PDF na segunda não precisa esperar o mesmo tanto
+ * que quem usou 3 no sábado — e não cria a corrida de "vira a semana, todo
+ * mundo importa ao mesmo tempo".
+ *
+ * `restantes: null` significa sem limite (Premium ou admin).
+ */
+export function situacaoPdf(
   perfil: Pick<Perfil, 'isPremium' | 'isAdmin'> | null | undefined,
-  pdfsUsados: number,
-): number | null {
-  if (temPremium(perfil)) return null
-  return Math.max(0, LIMITE_PDF_GRATIS - pdfsUsados)
+  datasDeUso: string[],
+  agora = new Date(),
+): { restantes: number | null; renovaEm: Date | null } {
+  if (temPremium(perfil)) return { restantes: null, renovaEm: null }
+
+  const usados = datasDeUso.length
+  const restantes = Math.max(0, LIMITE_PDF_GRATIS - usados)
+  if (restantes > 0 || usados === 0) return { restantes, renovaEm: null }
+
+  // A próxima vaga abre quando o uso MAIS ANTIGO da janela completar 7 dias.
+  const maisAntigo = datasDeUso.reduce((a, b) => (a < b ? a : b))
+  const renovaEm = new Date(new Date(maisAntigo).getTime() + JANELA_PDF_DIAS * DIA_MS)
+  return { restantes, renovaEm: renovaEm > agora ? renovaEm : null }
 }
