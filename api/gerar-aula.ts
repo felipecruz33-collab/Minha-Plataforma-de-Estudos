@@ -138,6 +138,26 @@ async function chamarGemini(apiKey: string, promptTexto: string): Promise<{ res:
   return { res, dados }
 }
 
+// Tenta cada chave da lista em ordem, passando pra próxima só quando a
+// anterior devolveu 503 (alta demanda) mesmo após suas próprias tentativas
+// internas — outros erros (429, 400 etc.) não acionam a próxima chave, pois
+// não é isso que resolveria o problema. Devolve também qual chave funcionou,
+// pra reusá-la no eventual reparo em vez de recomeçar a fila do zero.
+async function chamarGeminiComReserva(
+  chaves: string[],
+  promptTexto: string,
+): Promise<{ res: Response; dados: GeminiResponse; chaveUsada: string }> {
+  let ultimaTentativa: { res: Response; dados: GeminiResponse } | undefined
+  for (const chave of chaves) {
+    const tentativa = await chamarGemini(chave, promptTexto)
+    if (tentativa.res.status !== 503) {
+      return { ...tentativa, chaveUsada: chave }
+    }
+    ultimaTentativa = tentativa
+  }
+  return { ...ultimaTentativa!, chaveUsada: chaves[chaves.length - 1] }
+}
+
 function extrairTexto(dados: GeminiResponse): string {
   const candidato = dados.candidates?.[0]
   return candidato?.content?.parts?.map((p) => p.text ?? '').join('') ?? ''
@@ -156,10 +176,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     chaveUsuario?: string
   }
 
-  // Prioriza a chave própria do usuário (evita fila compartilhada) — cai pra
-  // chave da plataforma configurada na Vercel se ele não tiver a sua.
-  const apiKey = chaveUsuario?.trim() || process.env.GEMINI_API_KEY
-  if (!apiKey) {
+  // Prioriza a chave própria do usuário (evita fila compartilhada), depois a
+  // chave principal da plataforma e por fim uma chave reserva opcional — se
+  // uma chave devolver 503 (alta demanda), a próxima da lista é tentada
+  // automaticamente antes de desistir. GEMINI_API_KEY_RESERVA é opcional:
+  // sem ela, o comportamento é o mesmo de antes (só a chave principal).
+  const chaves = Array.from(
+    new Set(
+      [chaveUsuario?.trim(), process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_RESERVA]
+        .map((k) => k?.trim())
+        .filter((k): k is string => !!k),
+    ),
+  )
+  if (chaves.length === 0) {
     res.status(500).json({
       ok: false,
       error:
@@ -190,7 +219,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .filter(Boolean)
       .join('\n\n')
 
-    const { res: geminiRes, dados } = await chamarGemini(apiKey, userText)
+    const { res: geminiRes, dados, chaveUsada } = await chamarGeminiComReserva(chaves, userText)
 
     if (!geminiRes.ok) {
       if (geminiRes.status === 429) {
@@ -205,9 +234,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (geminiRes.status === 503) {
         res.status(503).json({
           ok: false,
-          error: chaveUsuario
-            ? 'O modelo de IA está com alta demanda no Google agora (já tentei de novo automaticamente). Espera um pouco e tenta de novo.'
-            : 'O modelo de IA está com alta demanda no Google agora, mesmo já tentando de novo automaticamente. Adicionar sua própria chave grátis em "Perfil" costuma resolver, já que ela não compete com a de outros usuários.',
+          error:
+            chaves.length > 1
+              ? 'O modelo de IA está com alta demanda no Google agora (já tentei de novo automaticamente e testei mais de uma chave). Espera um pouco e tenta de novo.'
+              : chaveUsuario
+                ? 'O modelo de IA está com alta demanda no Google agora (já tentei de novo automaticamente). Espera um pouco e tenta de novo.'
+                : 'O modelo de IA está com alta demanda no Google agora, mesmo já tentando de novo automaticamente. Adicionar sua própria chave grátis em "Perfil" costuma resolver, já que ela não compete com a de outros usuários.',
         })
         return
       }
@@ -260,7 +292,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'Corrija SOMENTE esses problemas estruturais no JSON acima. Não altere o conteúdo pedagógico, não remova nem invente questões, não invente informação que não estava lá. Devolva o JSON corrigido completo, com a mesma estrutura geral.',
       ].join('\n\n')
 
-      const reparo = await chamarGemini(apiKey, promptReparo)
+      const reparo = await chamarGemini(chaveUsada, promptReparo)
       if (!reparo.res.ok) {
         res.status(502).json({ ok: false, error: 'A IA devolveu um formato inválido e a correção automática falhou. Tente novamente.' })
         return
