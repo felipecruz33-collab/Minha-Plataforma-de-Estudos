@@ -38,7 +38,7 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MO
 // (aqui, saída estruturada) — evita fixar um modelo `:free` específico, que
 // entra e sai de linha com frequência.
 interface ProvedorOpenAiCompat {
-  id: 'groq' | 'openrouter' | 'aimlapi'
+  id: 'groq' | 'openrouter' | 'cerebras' | 'cohere'
   url: string
   model: string
   campoMaxTokens: 'max_completion_tokens' | 'max_tokens'
@@ -76,17 +76,33 @@ const OPENROUTER: ProvedorOpenAiCompat = {
   maxTokensSaida: 12000,
 }
 
-// AI/ML API: agregador que expõe vários modelos atrás de uma API única, no
-// mesmo formato compatível com OpenAI. O modelo vem de variável de ambiente
-// (AIMLAPI_MODEL) porque o catálogo deles é grande e muda — o padrão abaixo é
-// exatamente o que aparece no exemplo de onboarding da própria plataforma, e
-// trocar não exige mexer no código.
-const AIMLAPI: ProvedorOpenAiCompat = {
-  id: 'aimlapi',
-  url: 'https://api.aimlapi.com/v1/chat/completions',
-  model: process.env.AIMLAPI_MODEL?.trim() || 'openai/gpt-5-5',
+// Cerebras: inferência em hardware próprio, muito rápida. Tier gratuito de
+// 1M tokens/dia e ~30 mil tokens/minuto (bem mais folgado que os 8 mil da
+// Groq), mas com janela de contexto de 8K no grátis — por isso o teto de
+// saída aqui é baixo, como na Groq.
+const CEREBRAS: ProvedorOpenAiCompat = {
+  id: 'cerebras',
+  url: 'https://api.cerebras.ai/v1/chat/completions',
+  model: process.env.CEREBRAS_MODEL?.trim() || 'llama-4-scout-17b-16e-instruct',
   campoMaxTokens: 'max_tokens',
-  aceitaJsonSchema: true,
+  // Deliberadamente `json_object` (e não `json_schema`): um response_format
+  // não suportado devolve 400, e 400 não faz a cascata seguir adiante — o
+  // pedido inteiro morreria. A camada `normalizarSaidaIA` cobre a estrutura.
+  aceitaJsonSchema: false,
+  maxTokensSaida: 4000,
+}
+
+// Cohere: expõe um endpoint compatível com OpenAI em /compatibility/v1.
+// ATENÇÃO: a chave de teste (gratuita) é limitada a ~1000 chamadas/mês e,
+// segundo os termos deles, NÃO pode ser usada comercialmente — o que importa
+// pro plano de publicar na Play Store. Serve bem pra testar e pra uso
+// pessoal; virando produto, precisa de chave de produção.
+const COHERE: ProvedorOpenAiCompat = {
+  id: 'cohere',
+  url: 'https://api.cohere.ai/compatibility/v1/chat/completions',
+  model: process.env.COHERE_MODEL?.trim() || 'command-a-03-2025',
+  campoMaxTokens: 'max_tokens',
+  aceitaJsonSchema: false,
   maxTokensSaida: 12000,
 }
 
@@ -196,7 +212,8 @@ type Tentativa =
   | { res: Response; provedor: 'gemini'; dados: GeminiResponse }
   | { res: Response; provedor: 'groq'; dados: OpenAiCompatResponse }
   | { res: Response; provedor: 'openrouter'; dados: OpenAiCompatResponse }
-  | { res: Response; provedor: 'aimlapi'; dados: OpenAiCompatResponse }
+  | { res: Response; provedor: 'cerebras'; dados: OpenAiCompatResponse }
+  | { res: Response; provedor: 'cohere'; dados: OpenAiCompatResponse }
 
 // Teto de execução da função na Vercel, definido em vercel.json.
 //
@@ -307,7 +324,7 @@ function tentativaTempoEsgotado(provedor: ProvedorConfig['provedor']): Tentativa
   const res = new Response(null, { status: STATUS_TEMPO_ESGOTADO })
   return provedor === 'gemini'
     ? { res, provedor: 'gemini', dados: {} }
-    : { res, provedor: provedor as 'groq' | 'openrouter' | 'aimlapi', dados: {} }
+    : { res, provedor: provedor as 'groq' | 'openrouter' | 'cerebras' | 'cohere', dados: {} }
 }
 
 async function chamarGemini(apiKey: string, promptTexto: string, inicio: number): Promise<Tentativa> {
@@ -436,13 +453,14 @@ async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, pro
 }
 
 interface ProvedorConfig {
-  provedor: 'gemini' | 'groq' | 'openrouter' | 'aimlapi'
+  provedor: 'gemini' | 'groq' | 'openrouter' | 'cerebras' | 'cohere'
   chave: string
 }
 
 async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string, inicio: number): Promise<Tentativa> {
   if (cfg.provedor === 'gemini') return chamarGemini(cfg.chave, promptTexto, inicio)
-  const compat = cfg.provedor === 'groq' ? GROQ : cfg.provedor === 'aimlapi' ? AIMLAPI : OPENROUTER
+  const compat =
+    cfg.provedor === 'groq' ? GROQ : cfg.provedor === 'cerebras' ? CEREBRAS : cfg.provedor === 'cohere' ? COHERE : OPENROUTER
   return chamarOpenAiCompat(compat, cfg.chave, promptTexto, inicio)
 }
 
@@ -459,14 +477,21 @@ async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string, inicio: 
 // recomeçar a fila do zero.
 // 599 é o nosso status sintético de "estourou o teto de tempo / falhou a
 // rede" — também vale tentar o próximo provedor, que pode estar mais rápido.
-const STATUS_TENTA_PROXIMO = new Set([413, 429, 503, STATUS_TEMPO_ESGOTADO])
+// 401/402/403 entraram depois de um caso real: a AI/ML API respondeu "You've
+// run out of funds" e a mensagem foi direto pro usuário, derrubando o pedido
+// — mesmo com outro provedor disponível e funcionando. Chave inválida, sem
+// saldo ou sem permissão é problema DAQUELE provedor, e outro pode atender.
+// 404 idem (modelo que saiu do catálogo). 400 fica de fora de propósito: é
+// erro na nossa requisição, que se repetiria em qualquer provedor.
+const STATUS_TENTA_PROXIMO = new Set([401, 402, 403, 404, 413, 429, 503, STATUS_TEMPO_ESGOTADO])
 
 /** Nome legível de cada provedor, pra mensagens de erro e diagnóstico. */
 const NOME_PROVEDOR: Record<ProvedorConfig['provedor'], string> = {
   gemini: 'Gemini',
-  aimlapi: 'AI/ML API',
-  openrouter: 'OpenRouter',
+  cerebras: 'Cerebras',
   groq: 'Groq',
+  openrouter: 'OpenRouter',
+  cohere: 'Cohere',
 }
 
 // Quanto esperamos por um provedor antes de colocar o PRÓXIMO pra trabalhar
@@ -661,10 +686,11 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
   // paralelo, e o primeiro a entregar vence (ver `chamarComReserva`).
   // 1) Gemini principal (chave própria do usuário, evitando fila
   //    compartilhada, + GEMINI_API_KEY da plataforma)
-  // 2) AI/ML API
-  // 3) OpenRouter
-  // 4) Groq
-  // 5) Gemini reserva (GEMINI_API_KEY_RESERVA) — por último
+  // 2) Cerebras  — inferência muito rápida, cota diária folgada
+  // 3) Groq      — também muito rápida, mas com limite apertado por minuto
+  // 4) OpenRouter
+  // 5) Cohere
+  // 6) Gemini reserva (GEMINI_API_KEY_RESERVA) — por último
   // Cada item é opcional: sem nenhuma configuração extra, o comportamento é
   // o mesmo de sempre (só a chave do usuário e/ou GEMINI_API_KEY).
   // GEMINI_API_KEY_RESERVA, GROQ_API_KEY e OPENROUTER_API_KEY aceitam mais
@@ -682,14 +708,16 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
   )
   const chavesGeminiReserva = Array.from(new Set(dividirChaves(process.env.GEMINI_API_KEY_RESERVA)))
   const chavesGroq = Array.from(new Set(dividirChaves(process.env.GROQ_API_KEY)))
-  const chavesAimlapi = Array.from(new Set(dividirChaves(process.env.AIMLAPI_API_KEY)))
+  const chavesCerebras = Array.from(new Set(dividirChaves(process.env.CEREBRAS_API_KEY)))
+  const chavesCohere = Array.from(new Set(dividirChaves(process.env.COHERE_API_KEY)))
   const chavesOpenRouter = Array.from(new Set(dividirChaves(process.env.OPENROUTER_API_KEY)))
 
   const provedoresBrutos: ProvedorConfig[] = [
     ...chavesGeminiPrincipal.map((chave): ProvedorConfig => ({ provedor: 'gemini', chave })),
-    ...chavesAimlapi.map((chave): ProvedorConfig => ({ provedor: 'aimlapi' as const, chave })),
-    ...chavesOpenRouter.map((chave): ProvedorConfig => ({ provedor: 'openrouter' as const, chave })),
+    ...chavesCerebras.map((chave): ProvedorConfig => ({ provedor: 'cerebras' as const, chave })),
     ...chavesGroq.map((chave): ProvedorConfig => ({ provedor: 'groq' as const, chave })),
+    ...chavesOpenRouter.map((chave): ProvedorConfig => ({ provedor: 'openrouter' as const, chave })),
+    ...chavesCohere.map((chave): ProvedorConfig => ({ provedor: 'cohere' as const, chave })),
     ...chavesGeminiReserva.map((chave): ProvedorConfig => ({ provedor: 'gemini' as const, chave })),
   ]
   // Remove duplicatas exatas (mesmo provedor + mesma chave) que possam
