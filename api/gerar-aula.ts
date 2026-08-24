@@ -371,6 +371,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(400).json({
       ok: false,
       error: `PDF muito extenso para processar de uma vez (${Math.round(texto.length / 1000)} mil caracteres). Tente dividir o PDF em partes menores.`,
+      tamanhoExcessivo: true,
     })
     return
   }
@@ -420,6 +421,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ok: false,
           error:
             'Este PDF é grande demais para os provedores de reserva gratuitos configurados (eles têm um limite de tokens por minuto bem menor que o Gemini). Tente dividir o PDF em partes menores, ou tente de novo — se a chave principal do Gemini estiver disponível, ela costuma dar conta de PDFs maiores.',
+          tamanhoExcessivo: true,
         })
         return
       }
@@ -439,6 +441,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.status(502).json({
         ok: false,
         error: 'A aula gerada ficou grande demais e foi cortada. Tente dividir o PDF em partes menores.',
+        tamanhoExcessivo: true,
       })
       return
     }
@@ -473,6 +476,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.status(502).json({
           ok: false,
           error: 'A IA devolveu um formato inválido e não deu tempo de corrigir automaticamente (PDF grande demais). Tente de novo ou divida o PDF em partes menores.',
+          tamanhoExcessivo: true,
         })
         return
       }
