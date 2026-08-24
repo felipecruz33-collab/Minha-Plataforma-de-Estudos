@@ -269,22 +269,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // Prioriza a chave própria do usuário (evita fila compartilhada), depois a
-  // chave principal e a reserva do Gemini na plataforma e, só se todas essas
-  // estiverem sobrecarregadas (503), cai pra Groq — outro provedor gratuito,
-  // não-Google, configurável só pela plataforma (GROQ_API_KEY). Cada item é
-  // opcional: sem nenhuma configuração extra, o comportamento é o mesmo de
-  // sempre (só a chave do usuário e/ou GEMINI_API_KEY).
+  // chave principal e a(s) reserva(s) do Gemini na plataforma e, só se todas
+  // essas estiverem sem cota ou sobrecarregadas, cai pra Groq — outro
+  // provedor gratuito, não-Google, configurável só pela plataforma
+  // (GROQ_API_KEY). Cada item é opcional: sem nenhuma configuração extra, o
+  // comportamento é o mesmo de sempre (só a chave do usuário e/ou
+  // GEMINI_API_KEY). GEMINI_API_KEY_RESERVA e GROQ_API_KEY aceitam mais de
+  // uma chave, separadas por vírgula ou quebra de linha — pra adicionar mais
+  // reservas basta colar outra chave na mesma variável na Vercel, sem
+  // precisar mexer no código.
+  const dividirChaves = (valor: string | undefined) =>
+    (valor ?? '')
+      .split(/[,\n]/)
+      .map((k) => k.trim())
+      .filter(Boolean)
+
   const chavesGemini = Array.from(
-    new Set(
-      [chaveUsuario?.trim(), process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_RESERVA]
-        .map((k) => k?.trim())
-        .filter((k): k is string => !!k),
-    ),
+    new Set([
+      ...(chaveUsuario?.trim() ? [chaveUsuario.trim()] : []),
+      ...dividirChaves(process.env.GEMINI_API_KEY),
+      ...dividirChaves(process.env.GEMINI_API_KEY_RESERVA),
+    ]),
   )
-  const chaveGroq = process.env.GROQ_API_KEY?.trim()
+  const chavesGroq = Array.from(new Set(dividirChaves(process.env.GROQ_API_KEY)))
   const provedores: ProvedorConfig[] = [
     ...chavesGemini.map((chave): ProvedorConfig => ({ provedor: 'gemini', chave })),
-    ...(chaveGroq ? [{ provedor: 'groq' as const, chave: chaveGroq }] : []),
+    ...chavesGroq.map((chave): ProvedorConfig => ({ provedor: 'groq' as const, chave })),
   ]
   if (provedores.length === 0) {
     res.status(500).json({
