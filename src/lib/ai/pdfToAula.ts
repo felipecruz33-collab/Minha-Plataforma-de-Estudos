@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist'
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import type { AulaImportPayload } from '../types'
+import { mesclarAulasDoMesmoPdf } from './mesclarAulas'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
@@ -23,12 +24,20 @@ export async function extrairTextoPdf(file: File): Promise<{ texto: string; numP
   return { texto: paginas.join('\n\n').trim(), numPaginas: paginas.length }
 }
 
-// Um PDF muito longo tende a bater no orçamento de tempo da função (LIMITE_MS
-// em api/gerar-aula.ts) ou no limite de tokens/minuto dos provedores de
-// reserva gratuitos antes de terminar — daí o "resposta não veio em JSON".
-// Por isso dividimos em partes de ~25 páginas em média, na página em vez do
-// tamanho do texto (mais previsível pra quem está escolhendo o PDF).
-const PAGINAS_POR_PARTE = 25
+// O que limita o tamanho de cada pedaço NÃO é o quanto a IA lê, e sim o
+// quanto ela escreve: a saída sai token a token (sequencialmente, na casa de
+// ~100 por segundo), enquanto a entrada é processada de uma vez. Como o
+// prompt pede reescrita didática completa + todas as questões + explicação
+// de cada alternativa, a saída fica proporcional ao trecho enviado — e um
+// trecho grande simplesmente não termina dentro do minuto que a função
+// serverless tem por pedido.
+//
+// Por isso os pedaços são pequenos (~10 páginas). Isso deixou de ter custo
+// pro usuário quando passamos a costurar tudo numa aula só no final
+// (`mesclarAulasDoMesmoPdf`): mais pedaços não viram mais aulas soltas na
+// biblioteca, viram só mais chamadas por baixo dos panos. E se ainda assim
+// um pedaço não couber, `gerarComSubdivisao` racha aquele pedaço sozinho.
+const PAGINAS_POR_PARTE = 10
 
 // Teto de segurança bem folgado, só pra nunca fazer um número absurdo de
 // chamadas sequenciais num PDF extremamente longo — não é o critério
@@ -202,7 +211,10 @@ export async function gerarAulaViaIADividida(
     onProgresso?.(i + 1, partes.length)
     aulas.push(...(await gerarComSubdivisao(partes[i], paginasPorParte, materiaOverride, nomeArquivo, chaveUsuario)))
   }
-  return aulas
+  // Os pedaços são um detalhe interno de como driblamos o tempo limite do
+  // servidor — o usuário mandou um PDF e espera uma aula, então costuramos
+  // tudo de volta numa só antes de devolver.
+  return mesclarAulasDoMesmoPdf(aulas)
 }
 
 // Quantas vezes uma parte que ainda falhou por tamanho pode ser rachada ao

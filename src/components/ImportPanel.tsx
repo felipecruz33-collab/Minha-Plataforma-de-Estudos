@@ -204,7 +204,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
         nomeEscolhido ?? undefined,
         alvo.nomeArquivo,
         perfil?.chaveGemini,
-        (parte, total) => setEtapa(`Gerando parte ${parte} de ${total} (pode levar até 1 minuto cada)…`),
+        (parte, total) => setEtapa(`Montando a aula: etapa ${parte} de ${total} (cada uma leva até 1 minuto)…`),
       )
       await salvarPayloadsGerados(payloads, alvo.nomeArquivo, nomeEscolhido)
     } catch (e) {
@@ -325,12 +325,13 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
         {pdfMuitoGrande && !busy && (
           <div className="flex flex-col items-start gap-2 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">
             <p>
-              Esse PDF é grande demais para gerar de uma vez. Posso dividir em {pdfMuitoGrande.partes} partes e gerar cada uma
-              separadamente (como se fossem {pdfMuitoGrande.partes} aulas anexadas).
+              Esse PDF é grande demais para a IA gerar de uma vez. Posso processá-lo em {pdfMuitoGrande.partes} etapas e juntar tudo
+              em <span className="font-semibold">uma única aula</span> no final. Vai demorar mais, mas o resultado é uma aula
+              completa.
             </p>
             <Button type="button" variant="secondary" onClick={onDividirPdf} className="!py-1.5 !text-sm">
               <Scissors className="h-4 w-4" strokeWidth={1.75} />
-              Dividir em {pdfMuitoGrande.partes} partes e tentar de novo
+              Processar em {pdfMuitoGrande.partes} etapas e montar a aula
             </Button>
           </div>
         )}
