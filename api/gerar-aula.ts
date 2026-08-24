@@ -250,12 +250,27 @@ async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string): Promise
 // recomeçar a fila do zero.
 const STATUS_TENTA_PROXIMO = new Set([413, 429, 503])
 
+// A função tem no máximo 60s na Vercel (vercel.json) antes de ser encerrada
+// pela própria plataforma — e quando isso acontece, quem chega no navegador
+// é uma página de erro da Vercel, não a nossa resposta JSON (é exatamente o
+// "resposta não veio em JSON" que aparece pro usuário). Com vários
+// provedores de reserva na fila — cada um podendo levar dezenas de segundos
+// pra gerar uma aula grande — mais um possível reparo depois, o tempo total
+// pode passar disso. Por isso paramos de tentar mais provedores/reparo
+// com folga, sempre devolvendo uma resposta nossa em vez de deixar a
+// plataforma nos matar no meio do caminho.
+const LIMITE_MS = 50_000
+
 async function chamarComReserva(
   provedores: ProvedorConfig[],
   promptTexto: string,
+  inicio: number,
 ): Promise<{ tentativa: Tentativa; provedorUsado: ProvedorConfig }> {
   let ultima: { tentativa: Tentativa; provedorUsado: ProvedorConfig } | undefined
   for (const cfg of provedores) {
+    // Sempre tenta pelo menos o primeiro provedor da lista, mesmo sem tempo
+    // sobrando — só pula os seguintes quando já existe uma tentativa prévia.
+    if (ultima && Date.now() - inicio > LIMITE_MS) break
     const tentativa = await chamarProvedor(cfg, promptTexto)
     if (!STATUS_TENTA_PROXIMO.has(tentativa.res.status)) {
       return { tentativa, provedorUsado: cfg }
@@ -296,6 +311,7 @@ function extrairResultado(t: Tentativa): ResultadoExtraido {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const inicio = Date.now()
   if (req.method !== 'POST') {
     res.status(405).json({ ok: false, error: 'Método não permitido.' })
     return
@@ -369,7 +385,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .filter(Boolean)
       .join('\n\n')
 
-    const { tentativa, provedorUsado } = await chamarComReserva(provedores, userText)
+    const { tentativa, provedorUsado } = await chamarComReserva(provedores, userText, inicio)
     const iaRes = tentativa.res
 
     if (!iaRes.ok) {
@@ -449,6 +465,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!validado.success) {
       const erros = validado.error.issues.map((i) => `${i.path.join('.') || '(raiz)'}: ${i.message}`)
       console.error('gerar-aula: saída intermediária inválida, tentando reparo:', erros)
+
+      // Reparo é mais uma chamada de geração inteira — sem tempo sobrando,
+      // é melhor devolver um erro claro nosso do que arriscar estourar os
+      // 60s da função e a Vercel devolver uma página de erro sem JSON.
+      if (Date.now() - inicio > LIMITE_MS) {
+        res.status(502).json({
+          ok: false,
+          error: 'A IA devolveu um formato inválido e não deu tempo de corrigir automaticamente (PDF grande demais). Tente de novo ou divida o PDF em partes menores.',
+        })
+        return
+      }
 
       const promptReparo = [
         userText,
