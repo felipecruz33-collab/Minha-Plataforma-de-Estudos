@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { useAuth } from '../lib/auth/AuthContext'
+import { BIBLIOTECA_ABERTA_PARA_TODOS } from '../lib/premium'
 import { repo, usingSupabase } from '../lib/repo'
 
 const RECURSOS = [
@@ -11,7 +12,13 @@ const RECURSOS = [
   { nome: 'Importação de PDF com IA e arquivo .json', gratis: true, premium: true },
   { nome: 'Desempenho, simulados, favoritos e revisão', gratis: true, premium: true },
   { nome: 'Sem anúncios', gratis: true, premium: true },
-  { nome: 'Biblioteca compartilhada (catálogo curado)', gratis: false, premium: true },
+  {
+    nome: BIBLIOTECA_ABERTA_PARA_TODOS
+      ? 'Biblioteca compartilhada (catálogo curado) · liberada temporariamente'
+      : 'Biblioteca compartilhada (catálogo curado)',
+    gratis: BIBLIOTECA_ABERTA_PARA_TODOS,
+    premium: true,
+  },
 ]
 
 const PRODUCT_ID = (import.meta.env.VITE_PREMIUM_PRODUCT_ID as string | undefined) ?? 'premium_mensal'
@@ -92,6 +99,12 @@ export default function Premium() {
           </tbody>
         </table>
       </Card>
+
+      {BIBLIOTECA_ABERTA_PARA_TODOS && (
+        <p className="mb-4 text-xs text-slate-400">
+          A Biblioteca compartilhada está temporariamente liberada para todos, mesmo sem Premium.
+        </p>
+      )}
 
       {erro && <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{erro}</p>}
 

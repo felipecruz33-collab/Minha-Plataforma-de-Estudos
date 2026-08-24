@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
+import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../premium'
 import { repo, type MateriaComContagem } from '../repo'
 import type { Aula, Questao } from '../types'
 
@@ -13,7 +14,7 @@ export function useTodasQuestoes() {
   useEffect(() => {
     if (!user) return
     setLoading(true)
-    const podeVerBiblioteca = !!perfil?.isPremium || !!perfil?.isAdmin
+    const podeVerBiblioteca = calcPodeVerBiblioteca(perfil)
     Promise.all([repo.listMaterias(user.id), podeVerBiblioteca ? repo.listBiblioteca() : Promise.resolve<MateriaComContagem[]>([])])
       .then(async ([minhas, biblio]) => {
         const todasMaterias = [...minhas, ...biblio]

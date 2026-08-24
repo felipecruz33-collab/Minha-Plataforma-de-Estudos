@@ -18,6 +18,7 @@ desenvolvimento/demonstração sem backend.
    - `migrations/0006_simulados.sql`
    - `migrations/0007_cronogramas.sql`
    - `migrations/0008_perfil_chave_gemini.sql`
+   - `migrations/0009_biblioteca_aberta.sql`
 3. Copie `.env.example` para `.env.local` e preencha:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
@@ -49,3 +50,9 @@ biblioteca para qualquer usuário que não tenha `is_admin = true`, mesmo que
 a chamada não passe pela UI. As colunas `is_admin` e `is_premium` de
 `profiles` também só podem ser alteradas pelo `service_role` (trigger
 `protect_profile_flags`), nunca pelo próprio usuário autenticado.
+
+**Leitura** da biblioteca é diferente: por enquanto está aberta pra
+qualquer usuário autenticado, não só Premium/admin (`0009_biblioteca_aberta.sql`,
+espelhando `BIBLIOTECA_ABERTA_PARA_TODOS` em `src/lib/premium.ts`) — é
+proposital, fase de crescimento antes da Play Store. Ver os comentários
+nesses dois arquivos pra reativar o bloqueio quando chegar a hora.

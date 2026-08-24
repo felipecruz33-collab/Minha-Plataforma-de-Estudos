@@ -7,6 +7,7 @@ import { Card } from '../components/ui/Card'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAuth } from '../lib/auth/AuthContext'
+import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo } from '../lib/repo'
 import type { Aula, Materia } from '../lib/types'
 
@@ -15,7 +16,7 @@ export default function MateriaDetail() {
   const location = useLocation()
   const isBiblioteca = location.pathname.startsWith('/biblioteca')
   const { perfil } = useAuth()
-  const podeVerBiblioteca = !!perfil?.isPremium || !!perfil?.isAdmin
+  const podeVerBiblioteca = calcPodeVerBiblioteca(perfil)
   const podeGerir = isBiblioteca ? !!perfil?.isAdmin : true
   const acessoLiberado = !isBiblioteca || podeVerBiblioteca
 
