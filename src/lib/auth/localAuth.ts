@@ -58,3 +58,12 @@ export function signIn(email: string, password: string): { id: string; email: st
 export function signOut() {
   localStorage.removeItem(SESSION_KEY)
 }
+
+export function alterarSenha(userId: string, senhaAtual: string, novaSenha: string) {
+  const users = loadUsers()
+  const user = users.find((u) => u.id === userId)
+  if (!user) throw new Error('Conta não encontrada.')
+  if (user.password !== senhaAtual) throw new Error('A senha atual está incorreta.')
+  user.password = novaSenha
+  saveUsers(users)
+}

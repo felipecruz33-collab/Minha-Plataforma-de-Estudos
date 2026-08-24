@@ -1,7 +1,8 @@
-import { AlertTriangle, CheckCircle2, FileJson, FileUp, KeyRound, Scissors } from 'lucide-react'
-import { useState } from 'react'
+import { AlertTriangle, CheckCircle2, Crown, FileJson, FileUp, KeyRound, Scissors } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth/AuthContext'
+import { LIMITE_PDF_GRATIS, pdfsRestantes } from '../lib/premium'
 import { repo } from '../lib/repo'
 import { validateAulaImport } from '../lib/schema'
 import { MateriaPicker, resolverNomeMateria, type EscolhaMateria } from './MateriaPicker'
@@ -24,8 +25,26 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   const [pdfMuitoGrande, setPdfMuitoGrande] = useState<{ texto: string; numPaginas: number; nomeArquivo: string; partes: number } | null>(
     null,
   )
+  // `null` enquanto carrega: sem isso, a tela piscaria "0 de 3 restantes" e
+  // bloquearia o botão por um instante em toda visita.
+  const [pdfsUsados, setPdfsUsados] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!user) return
+    let ativo = true
+    repo
+      .contarPdfsImportados(user.id)
+      .then((n) => ativo && setPdfsUsados(n))
+      .catch(() => ativo && setPdfsUsados(0))
+    return () => {
+      ativo = false
+    }
+  }, [user, sucesso])
 
   if (!user) return null
+
+  const restantes = pdfsUsados === null ? null : pdfsRestantes(perfil, pdfsUsados)
+  const semPdfsRestantes = restantes === 0
 
   /** Valida e salva uma única aula — usado tanto pelo .json manual quanto, em loop, pelo PDF (que pode gerar mais de uma). */
   async function validarEImportarUma(
@@ -136,6 +155,10 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   }
 
   async function onPdfFile(file: File) {
+    if (semPdfsRestantes) {
+      setErrors([`Você já usou os ${LIMITE_PDF_GRATIS} PDFs do plano gratuito. Assine o Premium para converter sem limite.`])
+      return
+    }
     if (escolhaMateria.modo === 'nova' && !escolhaMateria.nome?.trim()) {
       setErrors(['Digite um nome para a nova matéria, ou escolha outra opção de destino.'])
       return
@@ -287,14 +310,55 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                 </span>
               </p>
             )}
-            <label className="flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed border-slate-300 p-8 text-center hover:border-brand-blue">
+            {/* Aviso de cota: só aparece pra quem tem limite (Premium e admin
+                recebem `null` de `pdfsRestantes`) e só depois da contagem
+                chegar, pra não piscar um número errado. */}
+            {restantes !== null && (
+              <div
+                className={`mb-3 flex items-start gap-2 rounded-lg p-3 text-xs ${
+                  semPdfsRestantes ? 'bg-amber-50 text-amber-900' : 'bg-slate-50 text-slate-600'
+                }`}
+              >
+                <Crown className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                <span>
+                  {semPdfsRestantes ? (
+                    <>
+                      Você já usou os <strong>{LIMITE_PDF_GRATIS} PDFs</strong> do plano gratuito.{' '}
+                      <Link to="/premium" className="font-semibold underline">
+                        Assine o Premium
+                      </Link>{' '}
+                      para converter sem limite — a importação de arquivos <strong>.json</strong> continua livre na outra
+                      aba.
+                    </>
+                  ) : (
+                    <>
+                      Plano gratuito: resta{restantes === 1 ? '' : 'm'} <strong>{restantes}</strong> de {LIMITE_PDF_GRATIS}{' '}
+                      PDF{restantes === 1 ? '' : 's'} com IA.{' '}
+                      <Link to="/premium" className="font-semibold underline">
+                        O Premium é sem limite
+                      </Link>
+                      ; a importação de <strong>.json</strong> já é livre pra todo mundo.
+                    </>
+                  )}
+                </span>
+              </div>
+            )}
+            <label
+              className={`flex flex-col items-center gap-2 rounded-lg border-2 border-dashed p-8 text-center ${
+                semPdfsRestantes
+                  ? 'cursor-not-allowed border-slate-200 opacity-60'
+                  : 'cursor-pointer border-slate-300 hover:border-brand-blue'
+              }`}
+            >
               <FileUp className="h-8 w-8 text-slate-400" strokeWidth={1.5} />
-              <span className="text-sm font-medium text-slate-600">Toque para escolher um PDF</span>
+              <span className="text-sm font-medium text-slate-600">
+                {semPdfsRestantes ? 'Limite do plano gratuito atingido' : 'Toque para escolher um PDF'}
+              </span>
               <input
                 type="file"
                 accept="application/pdf"
                 className="hidden"
-                disabled={busy}
+                disabled={busy || semPdfsRestantes}
                 onChange={(e) => {
                   const file = e.target.files?.[0]
                   if (file) onPdfFile(file)

@@ -252,6 +252,27 @@ export class LocalRepository implements DataRepository {
     }
   }
 
+  async excluirUsuario(userId: string): Promise<void> {
+    const s = load()
+    const materiaIds = new Set(s.materias.filter((m) => m.userId === userId).map((m) => m.id))
+    const aulaIds = new Set(s.aulas.filter((a) => materiaIds.has(a.materiaId)).map((a) => a.id))
+    s.materias = s.materias.filter((m) => !materiaIds.has(m.id))
+    s.aulas = s.aulas.filter((a) => !aulaIds.has(a.id))
+    s.respostas = s.respostas.filter((r) => r.userId !== userId)
+    s.geracoes = s.geracoes.filter((g) => g.userId !== userId)
+    s.simulados = s.simulados.filter((x) => x.userId !== userId)
+    delete s.cronogramas[userId]  // cronograma é um por usuário, guardado por id
+    delete s.perfis[userId]
+    save(s)
+  }
+
+  async contarPdfsImportados(userId: string): Promise<number> {
+    const s = load()
+    // Conta ARQUIVOS distintos, não linhas: um PDF dividido em vários trechos
+    // gera uma linha por aula, e cobrar isso como vários PDFs seria mentira.
+    return new Set(s.geracoes.filter((g) => g.userId === userId).map((g) => g.nomeArquivo)).size
+  }
+
   async toggleFavorito(userId: string, questaoId: string): Promise<Perfil> {
     const s = load()
     const perfil = s.perfis[userId]

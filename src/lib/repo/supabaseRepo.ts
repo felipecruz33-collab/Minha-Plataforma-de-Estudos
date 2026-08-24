@@ -319,11 +319,38 @@ export class SupabaseRepository implements DataRepository {
     }))
   }
 
-  async setPremium(): Promise<void> {
-    // Colunas is_admin/is_premium só podem ser alteradas por service_role
-    // (ver trigger protect_profile_flags em 0002_rls_policies.sql).
-    // No app real, isso acontece via webhook do Google Play Billing, não pelo cliente.
-    throw new Error('Alteração de status Premium deve ser feita pelo backend (webhook de assinatura), não pelo cliente.')
+  async setPremium(userId: string, value: boolean): Promise<void> {
+    // Quem autoriza é o banco, não esta linha: o gatilho protect_profile_flags
+    // (0012_admin_premium_e_exclusao.sql) só deixa is_premium mudar quando
+    // quem chama é admin. Para qualquer outro usuário a atualização passa sem
+    // erro e simplesmente não muda nada -- por isso relemos o perfil depois e
+    // avisamos, em vez de assumir que deu certo.
+    const { error } = await this.db().from('profiles').update({ is_premium: value }).eq('id', userId)
+    if (error) throw error
+    const { data, error: erroLeitura } = await this.db().from('profiles').select('is_premium').eq('id', userId).maybeSingle()
+    if (erroLeitura) throw erroLeitura
+    if (data && data.is_premium !== value) {
+      throw new Error(
+        'O banco recusou a mudança de Premium. Confira se a migração 0012_admin_premium_e_exclusao.sql foi aplicada no Supabase.',
+      )
+    }
+  }
+
+  async excluirUsuario(userId: string): Promise<void> {
+    // Apagar só a linha de profiles deixaria o login vivo em auth.users --
+    // a pessoa continuaria entrando, sem perfil. A função no banco apaga de
+    // auth.users, e o `on delete cascade` do schema leva junto matérias,
+    // aulas, respostas e gerações.
+    const { error } = await this.db().rpc('admin_excluir_usuario', { alvo: userId })
+    if (error) throw error
+  }
+
+  async contarPdfsImportados(userId: string): Promise<number> {
+    const { data, error } = await this.db().from('geracoes_ia').select('nome_arquivo').eq('user_id', userId)
+    if (error) throw error
+    // Arquivos distintos, não linhas: um PDF dividido em vários trechos gera
+    // uma linha por aula, e cobrar isso como vários PDFs seria mentira.
+    return new Set((data ?? []).map((g: { nome_arquivo: string }) => g.nome_arquivo)).size
   }
 
   async toggleFavorito(userId: string, questaoId: string): Promise<Perfil> {
