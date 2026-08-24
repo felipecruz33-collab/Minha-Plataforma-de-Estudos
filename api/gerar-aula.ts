@@ -167,7 +167,54 @@ type Tentativa =
   | { res: Response; provedor: 'groq'; dados: OpenAiCompatResponse }
   | { res: Response; provedor: 'openrouter'; dados: OpenAiCompatResponse }
 
-async function chamarGemini(apiKey: string, promptTexto: string): Promise<Tentativa> {
+// A função tem no máximo 60s na Vercel (vercel.json) antes de ser encerrada
+// pela própria plataforma — e quando isso acontece, quem chega no navegador
+// é uma página de erro HTML da Vercel, não a nossa resposta JSON (é
+// exatamente o "resposta não veio em JSON" que aparece pro usuário).
+// Trabalhamos com uma margem menor pra sempre sobrar tempo de montar e
+// devolver a nossa própria resposta.
+const LIMITE_MS = 50_000
+
+// Reserva final garantida pra compilar/validar/serializar a resposta depois
+// que a IA responde — nenhuma chamada externa pode consumir esse naco.
+const RESERVA_RESPOSTA_MS = 4_000
+
+/** Status sintético (não vem de nenhum provedor) pra "estourou o nosso próprio teto de tempo". */
+const STATUS_TEMPO_ESGOTADO = 599
+
+function msRestantes(inicio: number): number {
+  return LIMITE_MS - RESERVA_RESPOSTA_MS - (Date.now() - inicio)
+}
+
+/**
+ * `fetch` com teto de tempo próprio, calculado pelo que ainda sobra do
+ * orçamento da função. Sem isso, uma única chamada travada num provedor
+ * passa direto pelo controle de tempo (que só valia ENTRE provedores),
+ * estoura os 60s e faz a Vercel matar a função no meio — devolvendo HTML em
+ * vez do nosso JSON. Com o teto, sempre desistimos antes e respondemos nós.
+ */
+async function fetchComTeto(url: string, opcoes: RequestInit, inicio: number): Promise<Response> {
+  const restante = msRestantes(inicio)
+  if (restante <= 0) throw new Error('Sem orçamento de tempo restante para chamar a IA.')
+
+  const controlador = new AbortController()
+  const timer = setTimeout(() => controlador.abort(), restante)
+  try {
+    return await fetch(url, { ...opcoes, signal: controlador.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Resposta sintética usada quando a chamada foi abortada/falhou na rede — faz a cascata seguir pro próximo provedor. */
+function tentativaTempoEsgotado(provedor: ProvedorConfig['provedor']): Tentativa {
+  const res = new Response(null, { status: STATUS_TEMPO_ESGOTADO })
+  return provedor === 'gemini'
+    ? { res, provedor: 'gemini', dados: {} }
+    : { res, provedor: provedor as 'groq' | 'openrouter', dados: {} }
+}
+
+async function chamarGemini(apiKey: string, promptTexto: string, inicio: number): Promise<Tentativa> {
   const corpoRequisicao = JSON.stringify({
     systemInstruction: { parts: [{ text: SYSTEM_PROMPT_GERAR_AULA }] },
     contents: [{ role: 'user', parts: [{ text: promptTexto }] }],
@@ -185,21 +232,32 @@ async function chamarGemini(apiKey: string, promptTexto: string): Promise<Tentat
   const esperasEntreTentativas = [0, 3000]
   let res: Response
   let dados: GeminiResponse
-  do {
-    const espera = esperasEntreTentativas.shift()!
-    if (espera) await new Promise((r) => setTimeout(r, espera))
-    res = await fetch(GEMINI_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      body: corpoRequisicao,
-    })
-    dados = (await res.json()) as GeminiResponse
-  } while (res.status === 503 && esperasEntreTentativas.length > 0)
+  try {
+    do {
+      const espera = esperasEntreTentativas.shift()!
+      // Só espera pra tentar de novo se ainda sobrar tempo pra isso valer a pena.
+      if (espera) {
+        if (msRestantes(inicio) <= espera) return tentativaTempoEsgotado('gemini')
+        await new Promise((r) => setTimeout(r, espera))
+      }
+      res = await fetchComTeto(
+        GEMINI_URL,
+        { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, body: corpoRequisicao },
+        inicio,
+      )
+      dados = (await res.json()) as GeminiResponse
+    } while (res.status === 503 && esperasEntreTentativas.length > 0)
+  } catch (err) {
+    // Abortado pelo nosso teto de tempo, ou falha de rede — nos dois casos
+    // vale tentar o próximo provedor da fila em vez de derrubar o pedido.
+    console.error('gerar-aula: chamada ao Gemini abortada/falhou:', err instanceof Error ? err.message : err)
+    return tentativaTempoEsgotado('gemini')
+  }
 
   return { res, dados, provedor: 'gemini' }
 }
 
-async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, promptTexto: string): Promise<Tentativa> {
+async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, promptTexto: string, inicio: number): Promise<Tentativa> {
   const corpoRequisicao = JSON.stringify({
     model: cfg.model,
     messages: [
@@ -213,16 +271,24 @@ async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, pro
   const esperasEntreTentativas = [0, 3000]
   let res: Response
   let dados: OpenAiCompatResponse
-  do {
-    const espera = esperasEntreTentativas.shift()!
-    if (espera) await new Promise((r) => setTimeout(r, espera))
-    res = await fetch(cfg.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: corpoRequisicao,
-    })
-    dados = (await res.json()) as OpenAiCompatResponse
-  } while (res.status === 503 && esperasEntreTentativas.length > 0)
+  try {
+    do {
+      const espera = esperasEntreTentativas.shift()!
+      if (espera) {
+        if (msRestantes(inicio) <= espera) return tentativaTempoEsgotado(cfg.id)
+        await new Promise((r) => setTimeout(r, espera))
+      }
+      res = await fetchComTeto(
+        cfg.url,
+        { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, body: corpoRequisicao },
+        inicio,
+      )
+      dados = (await res.json()) as OpenAiCompatResponse
+    } while (res.status === 503 && esperasEntreTentativas.length > 0)
+  } catch (err) {
+    console.error(`gerar-aula: chamada à ${cfg.id} abortada/falhou:`, err instanceof Error ? err.message : err)
+    return tentativaTempoEsgotado(cfg.id)
+  }
 
   return { res, dados, provedor: cfg.id }
 }
@@ -232,9 +298,9 @@ interface ProvedorConfig {
   chave: string
 }
 
-async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string): Promise<Tentativa> {
-  if (cfg.provedor === 'gemini') return chamarGemini(cfg.chave, promptTexto)
-  return chamarOpenAiCompat(cfg.provedor === 'groq' ? GROQ : OPENROUTER, cfg.chave, promptTexto)
+async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string, inicio: number): Promise<Tentativa> {
+  if (cfg.provedor === 'gemini') return chamarGemini(cfg.chave, promptTexto, inicio)
+  return chamarOpenAiCompat(cfg.provedor === 'groq' ? GROQ : OPENROUTER, cfg.chave, promptTexto, inicio)
 }
 
 // Tenta cada provedor/chave da lista em ordem, passando pro próximo quando o
@@ -248,18 +314,9 @@ async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string): Promise
 // pro próximo provedor da fila em vez de travar aqui. Devolve também com
 // qual configuração deu certo, pra reusá-la no eventual reparo em vez de
 // recomeçar a fila do zero.
-const STATUS_TENTA_PROXIMO = new Set([413, 429, 503])
-
-// A função tem no máximo 60s na Vercel (vercel.json) antes de ser encerrada
-// pela própria plataforma — e quando isso acontece, quem chega no navegador
-// é uma página de erro da Vercel, não a nossa resposta JSON (é exatamente o
-// "resposta não veio em JSON" que aparece pro usuário). Com vários
-// provedores de reserva na fila — cada um podendo levar dezenas de segundos
-// pra gerar uma aula grande — mais um possível reparo depois, o tempo total
-// pode passar disso. Por isso paramos de tentar mais provedores/reparo
-// com folga, sempre devolvendo uma resposta nossa em vez de deixar a
-// plataforma nos matar no meio do caminho.
-const LIMITE_MS = 50_000
+// 599 é o nosso status sintético de "estourou o teto de tempo / falhou a
+// rede" — também vale tentar o próximo provedor, que pode estar mais rápido.
+const STATUS_TENTA_PROXIMO = new Set([413, 429, 503, STATUS_TEMPO_ESGOTADO])
 
 async function chamarComReserva(
   provedores: ProvedorConfig[],
@@ -271,7 +328,7 @@ async function chamarComReserva(
     // Sempre tenta pelo menos o primeiro provedor da lista, mesmo sem tempo
     // sobrando — só pula os seguintes quando já existe uma tentativa prévia.
     if (ultima && Date.now() - inicio > LIMITE_MS) break
-    const tentativa = await chamarProvedor(cfg, promptTexto)
+    const tentativa = await chamarProvedor(cfg, promptTexto, inicio)
     if (!STATUS_TENTA_PROXIMO.has(tentativa.res.status)) {
       return { tentativa, provedorUsado: cfg }
     }
@@ -437,6 +494,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         })
         return
       }
+      if (iaRes.status === STATUS_TEMPO_ESGOTADO) {
+        // Nenhum provedor conseguiu responder dentro do tempo que a função
+        // tem na Vercel. Antes essa situação matava a função no meio e
+        // devolvia HTML ("resposta não veio em JSON"); agora desistimos
+        // sozinhos a tempo e explicamos o que fazer.
+        res.status(504).json({
+          ok: false,
+          error:
+            'A IA demorou mais do que o tempo disponível para responder (o servidor tem 1 minuto por pedido). Isso costuma acontecer quando o trecho enviado é grande demais — dividir o PDF em mais partes resolve.',
+          tamanhoExcessivo: true,
+        })
+        return
+      }
       const extraidoErro = extrairResultado(tentativa)
       console.error('gerar-aula: IA retornou erro:', provedorUsado.provedor, iaRes.status, extraidoErro.erroMensagem)
       res.status(502).json({ ok: false, error: extraidoErro.erroMensagem || 'A IA recusou o pedido. Tente novamente.' })
@@ -502,7 +572,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'Corrija SOMENTE esses problemas estruturais no JSON acima. Não altere o conteúdo pedagógico, não remova nem invente questões, não invente informação que não estava lá. Devolva o JSON corrigido completo, com a mesma estrutura geral.',
       ].join('\n\n')
 
-      const reparo = await chamarProvedor(provedorUsado, promptReparo)
+      const reparo = await chamarProvedor(provedorUsado, promptReparo, inicio)
       if (!reparo.res.ok) {
         res.status(502).json({ ok: false, error: 'A IA devolveu um formato inválido e a correção automática falhou. Tente novamente.' })
         return

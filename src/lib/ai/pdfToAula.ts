@@ -79,10 +79,23 @@ async function gerarAulasDoTexto(
 
   const contentType = resposta.headers.get('content-type') ?? ''
   if (!contentType.includes('application/json')) {
-    // Sem corpo JSON pra ler, mas na prática essa falha (function serverless
-    // encerrada pela plataforma) costuma ser causada por um PDF grande
-    // demais pro tempo disponível — mesmo alívio de dividir em mais partes.
-    throw new PdfMuitoGrandeError('Endpoint de IA indisponível neste ambiente (resposta não veio em JSON).', texto, numPaginas)
+    // Resposta que não é nossa — quase sempre a página de erro da própria
+    // plataforma (função encerrada por tempo, crash, rota errada). Antes
+    // isso virava uma mensagem genérica que não dizia nada; agora
+    // registramos o status HTTP e um trecho do corpo, que é o que realmente
+    // identifica a causa (ex.: 504 = tempo esgotado, 500 = falha na função).
+    const status = resposta.status
+    const corpo = (await resposta.text().catch(() => ''))
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 160)
+    const detalhe = corpo ? ` Resposta do servidor: "${corpo}"` : ''
+    throw new PdfMuitoGrandeError(
+      `O servidor de IA respondeu ${status} sem JSON — normalmente é o tempo limite do servidor com um trecho grande demais.${detalhe}`,
+      texto,
+      numPaginas,
+    )
   }
 
   const dados = (await resposta.json()) as { ok: boolean; payload?: AulaImportPayload[]; error?: string; tamanhoExcessivo?: boolean }
@@ -187,7 +200,46 @@ export async function gerarAulaViaIADividida(
   const aulas: AulaImportPayload[] = []
   for (let i = 0; i < partes.length; i++) {
     onProgresso?.(i + 1, partes.length)
-    aulas.push(...(await gerarAulasDoTexto(partes[i], paginasPorParte, materiaOverride, nomeArquivo, chaveUsuario)))
+    aulas.push(...(await gerarComSubdivisao(partes[i], paginasPorParte, materiaOverride, nomeArquivo, chaveUsuario)))
   }
   return aulas
+}
+
+// Quantas vezes uma parte que ainda falhou por tamanho pode ser rachada ao
+// meio automaticamente. 3 níveis = uma parte pode virar até 8 pedaços — o
+// suficiente pra salvar um trecho denso sem transformar a aula em caquinhos.
+const MAX_SUBDIVISOES = 3
+
+/**
+ * Gera uma parte e, se ela ainda estourar o tempo/tamanho do servidor,
+ * racha essa parte ao meio e tenta cada metade — recursivamente, até
+ * `MAX_SUBDIVISOES` níveis. É o "se ajudar sozinho": em vez de devolver o
+ * erro pro usuário e pedir pra ele resolver, o sistema tenta o próximo
+ * tamanho que tem chance de caber.
+ */
+async function gerarComSubdivisao(
+  texto: string,
+  numPaginas: number,
+  materiaOverride: string | undefined,
+  nomeArquivo: string,
+  chaveUsuario: string | null | undefined,
+  nivel = 0,
+): Promise<AulaImportPayload[]> {
+  try {
+    return await gerarAulasDoTexto(texto, numPaginas, materiaOverride, nomeArquivo, chaveUsuario)
+  } catch (e) {
+    // Só vale rachar de novo se a falha foi por tamanho/tempo e o pedaço
+    // ainda é grande o bastante pra dividir em dois trechos com conteúdo.
+    if (!(e instanceof PdfMuitoGrandeError) || nivel >= MAX_SUBDIVISOES) throw e
+
+    const metades = dividirTextoEmPartes(texto, 2)
+    if (metades.length < 2) throw e
+
+    const paginasPorMetade = Math.max(1, Math.round(numPaginas / 2))
+    const aulas: AulaImportPayload[] = []
+    for (const metade of metades) {
+      aulas.push(...(await gerarComSubdivisao(metade, paginasPorMetade, materiaOverride, nomeArquivo, chaveUsuario, nivel + 1)))
+    }
+    return aulas
+  }
 }
