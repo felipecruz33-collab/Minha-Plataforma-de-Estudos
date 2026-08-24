@@ -19,6 +19,15 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MO
 // (google-auth-library, protobufjs, ws) dentro da função serverless da
 // Vercel — não precisamos de nada disso pra uma chamada simples com chave de API.
 
+// Groq: outro provedor gratuito, não-Google, usado só como reserva quando
+// TODAS as chaves do Gemini estiverem sobrecarregadas (503) — resolve o caso
+// relatado de "o Gemini grátis está sempre sobrecarregado". openai/gpt-oss-120b
+// é o modelo de produção atual recomendado pela própria Groq como substituto
+// dos modelos Llama 3.x que ela vem descontinuando — mesmo motivo de usar um
+// alias no Gemini acima: não fixar um nome que já saiu de linha.
+const GROQ_MODEL = 'openai/gpt-oss-120b'
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions'
+
 // JSON Schema do formato INTERMEDIÁRIO (semântico — sem HTML, sem "ordem").
 // A IA nunca gera o HTML final; `src/lib/lessonCompiler.ts` faz isso depois,
 // a partir de templates fixos — por isso a saída da IA é segura por
@@ -93,6 +102,15 @@ const AULA_GERADA_JSON_SCHEMA = {
   required: ['materia', 'aulas'],
 }
 
+// A Groq (modo "json_object") não aceita um JSON Schema pra forçar o formato
+// como o Gemini aceita (responseJsonSchema) — só garante sintaxe JSON válida,
+// sem garantir a estrutura. Por isso reforçamos a estrutura esperada no
+// próprio prompt, reusando o mesmo schema já definido acima (fonte única) —
+// e a validação/reparo já existentes cobrem o resto. O modo "json_object" da
+// Groq também exige que a palavra "JSON" apareça nas mensagens, senão ela
+// recusa o pedido.
+const SUFIXO_JSON_GROQ = `\n\nResponda em JSON. Devolva SOMENTE um objeto JSON válido (sem markdown, sem texto fora do JSON), seguindo exatamente este formato:\n${JSON.stringify(AULA_GERADA_JSON_SCHEMA)}`
+
 interface GeminiPart {
   text?: string
 }
@@ -106,7 +124,16 @@ interface GeminiResponse {
   error?: { message?: string; status?: string }
 }
 
-async function chamarGemini(apiKey: string, promptTexto: string): Promise<{ res: Response; dados: GeminiResponse }> {
+interface GroqResponse {
+  choices?: { message?: { content?: string }; finish_reason?: string }[]
+  error?: { message?: string }
+}
+
+type Tentativa =
+  | { res: Response; provedor: 'gemini'; dados: GeminiResponse }
+  | { res: Response; provedor: 'groq'; dados: GroqResponse }
+
+async function chamarGemini(apiKey: string, promptTexto: string): Promise<Tentativa> {
   const corpoRequisicao = JSON.stringify({
     systemInstruction: { parts: [{ text: SYSTEM_PROMPT_GERAR_AULA }] },
     contents: [{ role: 'user', parts: [{ text: promptTexto }] }],
@@ -135,32 +162,94 @@ async function chamarGemini(apiKey: string, promptTexto: string): Promise<{ res:
     dados = (await res.json()) as GeminiResponse
   } while (res.status === 503 && esperasEntreTentativas.length > 0)
 
-  return { res, dados }
+  return { res, dados, provedor: 'gemini' }
 }
 
-// Tenta cada chave da lista em ordem, passando pra próxima só quando a
-// anterior devolveu 503 (alta demanda) mesmo após suas próprias tentativas
-// internas — outros erros (429, 400 etc.) não acionam a próxima chave, pois
-// não é isso que resolveria o problema. Devolve também qual chave funcionou,
-// pra reusá-la no eventual reparo em vez de recomeçar a fila do zero.
-async function chamarGeminiComReserva(
-  chaves: string[],
+async function chamarGroq(apiKey: string, promptTexto: string): Promise<Tentativa> {
+  const corpoRequisicao = JSON.stringify({
+    model: GROQ_MODEL,
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT_GERAR_AULA + SUFIXO_JSON_GROQ },
+      { role: 'user', content: promptTexto },
+    ],
+    response_format: { type: 'json_object' },
+    max_completion_tokens: 24000,
+  })
+
+  const esperasEntreTentativas = [0, 3000]
+  let res: Response
+  let dados: GroqResponse
+  do {
+    const espera = esperasEntreTentativas.shift()!
+    if (espera) await new Promise((r) => setTimeout(r, espera))
+    res = await fetch(GROQ_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: corpoRequisicao,
+    })
+    dados = (await res.json()) as GroqResponse
+  } while (res.status === 503 && esperasEntreTentativas.length > 0)
+
+  return { res, dados, provedor: 'groq' }
+}
+
+interface ProvedorConfig {
+  provedor: 'gemini' | 'groq'
+  chave: string
+}
+
+async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string): Promise<Tentativa> {
+  return cfg.provedor === 'gemini' ? chamarGemini(cfg.chave, promptTexto) : chamarGroq(cfg.chave, promptTexto)
+}
+
+// Tenta cada provedor/chave da lista em ordem, passando pro próximo só
+// quando o anterior devolveu 503 (alta demanda) mesmo após suas tentativas
+// internas — outros erros (429 de cota, 400 etc.) não acionam o próximo, pois
+// não é isso que resolveria o problema. Devolve também com qual configuração
+// deu certo, pra reusá-la no eventual reparo em vez de recomeçar a fila do zero.
+async function chamarComReserva(
+  provedores: ProvedorConfig[],
   promptTexto: string,
-): Promise<{ res: Response; dados: GeminiResponse; chaveUsada: string }> {
-  let ultimaTentativa: { res: Response; dados: GeminiResponse } | undefined
-  for (const chave of chaves) {
-    const tentativa = await chamarGemini(chave, promptTexto)
+): Promise<{ tentativa: Tentativa; provedorUsado: ProvedorConfig }> {
+  let ultima: { tentativa: Tentativa; provedorUsado: ProvedorConfig } | undefined
+  for (const cfg of provedores) {
+    const tentativa = await chamarProvedor(cfg, promptTexto)
     if (tentativa.res.status !== 503) {
-      return { ...tentativa, chaveUsada: chave }
+      return { tentativa, provedorUsado: cfg }
     }
-    ultimaTentativa = tentativa
+    ultima = { tentativa, provedorUsado: cfg }
   }
-  return { ...ultimaTentativa!, chaveUsada: chaves[chaves.length - 1] }
+  return ultima!
 }
 
-function extrairTexto(dados: GeminiResponse): string {
-  const candidato = dados.candidates?.[0]
-  return candidato?.content?.parts?.map((p) => p.text ?? '').join('') ?? ''
+interface ResultadoExtraido {
+  texto: string
+  bloqueadoMotivo?: string
+  cortado?: boolean
+  erroMensagem?: string
+}
+
+// Normaliza a resposta de qualquer um dos dois provedores pro mesmo formato,
+// já que Gemini e Groq têm formas de resposta bem diferentes (a Groq segue o
+// formato compatível com OpenAI: "choices[0].message.content" em vez de
+// "candidates[0].content.parts").
+function extrairResultado(t: Tentativa): ResultadoExtraido {
+  if (t.provedor === 'gemini') {
+    const candidato = t.dados.candidates?.[0]
+    return {
+      texto: candidato?.content?.parts?.map((p) => p.text ?? '').join('') ?? '',
+      bloqueadoMotivo: t.dados.promptFeedback?.blockReason,
+      cortado: candidato?.finishReason === 'MAX_TOKENS',
+      erroMensagem: t.dados.error?.message,
+    }
+  }
+  const escolha = t.dados.choices?.[0]
+  return {
+    texto: escolha?.message?.content ?? '',
+    bloqueadoMotivo: escolha?.finish_reason === 'content_filter' ? 'content_filter' : undefined,
+    cortado: escolha?.finish_reason === 'length',
+    erroMensagem: t.dados.error?.message,
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -177,18 +266,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // Prioriza a chave própria do usuário (evita fila compartilhada), depois a
-  // chave principal da plataforma e por fim uma chave reserva opcional — se
-  // uma chave devolver 503 (alta demanda), a próxima da lista é tentada
-  // automaticamente antes de desistir. GEMINI_API_KEY_RESERVA é opcional:
-  // sem ela, o comportamento é o mesmo de antes (só a chave principal).
-  const chaves = Array.from(
+  // chave principal e a reserva do Gemini na plataforma e, só se todas essas
+  // estiverem sobrecarregadas (503), cai pra Groq — outro provedor gratuito,
+  // não-Google, configurável só pela plataforma (GROQ_API_KEY). Cada item é
+  // opcional: sem nenhuma configuração extra, o comportamento é o mesmo de
+  // sempre (só a chave do usuário e/ou GEMINI_API_KEY).
+  const chavesGemini = Array.from(
     new Set(
       [chaveUsuario?.trim(), process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_RESERVA]
         .map((k) => k?.trim())
         .filter((k): k is string => !!k),
     ),
   )
-  if (chaves.length === 0) {
+  const chaveGroq = process.env.GROQ_API_KEY?.trim()
+  const provedores: ProvedorConfig[] = [
+    ...chavesGemini.map((chave): ProvedorConfig => ({ provedor: 'gemini', chave })),
+    ...(chaveGroq ? [{ provedor: 'groq' as const, chave: chaveGroq }] : []),
+  ]
+  if (provedores.length === 0) {
     res.status(500).json({
       ok: false,
       error:
@@ -219,40 +314,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .filter(Boolean)
       .join('\n\n')
 
-    const { res: geminiRes, dados, chaveUsada } = await chamarGeminiComReserva(chaves, userText)
+    const { tentativa, provedorUsado } = await chamarComReserva(provedores, userText)
+    const iaRes = tentativa.res
 
-    if (!geminiRes.ok) {
-      if (geminiRes.status === 429) {
+    if (!iaRes.ok) {
+      if (iaRes.status === 429) {
         res.status(429).json({
           ok: false,
-          error: chaveUsuario
-            ? 'Cota gratuita da sua chave do Gemini esgotada por agora. Tente novamente em alguns minutos.'
-            : 'Cota gratuita compartilhada esgotada por agora. Adicione sua própria chave grátis em "Perfil" pra não depender dela, ou tente de novo mais tarde.',
+          error:
+            provedorUsado.provedor === 'gemini'
+              ? chaveUsuario
+                ? 'Cota gratuita da sua chave do Gemini esgotada por agora. Tente novamente em alguns minutos.'
+                : 'Cota gratuita compartilhada do Gemini esgotada por agora. Adicione sua própria chave grátis em "Perfil" pra não depender dela, ou tente de novo mais tarde.'
+              : 'Cota gratuita do provedor de reserva (Groq) esgotada por agora. Tente novamente mais tarde.',
         })
         return
       }
-      if (geminiRes.status === 503) {
+      if (iaRes.status === 503) {
         res.status(503).json({
           ok: false,
           error:
-            chaves.length > 1
-              ? 'O modelo de IA está com alta demanda no Google agora (já tentei de novo automaticamente e testei mais de uma chave). Espera um pouco e tenta de novo.'
+            provedores.length > 1
+              ? 'A IA está com alta demanda agora, mesmo já tentando de novo automaticamente e testando mais de uma chave/provedor (incluindo a reserva). Espera um pouco e tenta de novo.'
               : chaveUsuario
                 ? 'O modelo de IA está com alta demanda no Google agora (já tentei de novo automaticamente). Espera um pouco e tenta de novo.'
                 : 'O modelo de IA está com alta demanda no Google agora, mesmo já tentando de novo automaticamente. Adicionar sua própria chave grátis em "Perfil" costuma resolver, já que ela não compete com a de outros usuários.',
         })
         return
       }
-      console.error('gerar-aula: Gemini retornou erro:', geminiRes.status, dados.error)
-      res.status(502).json({ ok: false, error: dados.error?.message || 'A IA recusou o pedido. Tente novamente.' })
+      const extraidoErro = extrairResultado(tentativa)
+      console.error('gerar-aula: IA retornou erro:', provedorUsado.provedor, iaRes.status, extraidoErro.erroMensagem)
+      res.status(502).json({ ok: false, error: extraidoErro.erroMensagem || 'A IA recusou o pedido. Tente novamente.' })
       return
     }
 
-    if (dados.promptFeedback?.blockReason) {
-      res.status(502).json({ ok: false, error: `A IA bloqueou o conteúdo (motivo: ${dados.promptFeedback.blockReason}).` })
+    const extraido = extrairResultado(tentativa)
+
+    if (extraido.bloqueadoMotivo) {
+      res.status(502).json({ ok: false, error: `A IA bloqueou o conteúdo (motivo: ${extraido.bloqueadoMotivo}).` })
       return
     }
-    if (dados.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
+    if (extraido.cortado) {
       res.status(502).json({
         ok: false,
         error: 'A aula gerada ficou grande demais e foi cortada. Tente dividir o PDF em partes menores.',
@@ -260,7 +362,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return
     }
 
-    let textoResposta = extrairTexto(dados)
+    let textoResposta = extraido.texto
     if (!textoResposta) {
       res.status(502).json({ ok: false, error: 'A IA não devolveu nenhum conteúdo. Tente novamente.' })
       return
@@ -292,12 +394,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'Corrija SOMENTE esses problemas estruturais no JSON acima. Não altere o conteúdo pedagógico, não remova nem invente questões, não invente informação que não estava lá. Devolva o JSON corrigido completo, com a mesma estrutura geral.',
       ].join('\n\n')
 
-      const reparo = await chamarGemini(chaveUsada, promptReparo)
+      const reparo = await chamarProvedor(provedorUsado, promptReparo)
       if (!reparo.res.ok) {
         res.status(502).json({ ok: false, error: 'A IA devolveu um formato inválido e a correção automática falhou. Tente novamente.' })
         return
       }
-      textoResposta = extrairTexto(reparo.dados)
+      textoResposta = extrairResultado(reparo).texto
       try {
         bruto = JSON.parse(textoResposta)
       } catch {
