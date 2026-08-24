@@ -153,13 +153,28 @@ export function validateAulaImport(raw: unknown): ValidationResult {
         errors.push(`${path}: "gabarito" ("${q.gabarito}") não corresponde a nenhuma alternativa`)
       }
 
+      // `altExp` (explicação por alternativa) continua sendo um objeto
+      // obrigatório, mas NÃO precisa mais cobrir todas as alternativas.
+      //
+      // Motivo: exigir uma explicação para cada alternativa multiplicava por
+      // ~5 o tanto que a IA tinha que escrever numa importação de PDF — e é
+      // o tanto que ela ESCREVE que domina o tempo de resposta, estourando o
+      // limite do servidor. Quem quiser o material completo, com comentário
+      // em toda alternativa, continua podendo importar o .json direto (o
+      // formato aceita e a tela explica isso).
+      //
+      // As chaves que vierem precisam ser de alternativas que existem e ter
+      // texto de verdade — explicação vazia ou apontando pra alternativa
+      // inexistente continua sendo erro.
       if (typeof q.altExp !== 'object' || q.altExp === null || Array.isArray(q.altExp)) {
         errors.push(`${path}: "altExp" é obrigatório e deve ser um objeto`)
       } else {
         const altExp = q.altExp as Record<string, unknown>
-        for (const id of ids) {
-          if (typeof altExp[id] !== 'string' || !altExp[id]) {
-            errors.push(`${path}: "altExp" está sem explicação para a alternativa "${id}"`)
+        for (const [id, valor] of Object.entries(altExp)) {
+          if (ids.length && !ids.includes(id)) {
+            errors.push(`${path}: "altExp" explica a alternativa "${id}", que não existe nesta questão`)
+          } else if (typeof valor !== 'string' || !valor.trim()) {
+            errors.push(`${path}: "altExp" tem uma explicação vazia para a alternativa "${id}"`)
           }
         }
       }
