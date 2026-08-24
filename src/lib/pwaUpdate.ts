@@ -39,6 +39,7 @@ type Ouvinte = (temAtualizacao: boolean) => void
 const ouvintes = new Set<Ouvinte>()
 let atualizacaoPendente = false
 let aplicar: ((recarregar?: boolean) => Promise<void>) | null = null
+let registro: ServiceWorkerRegistration | null = null
 
 function avisar() {
   for (const ouvinte of ouvintes) ouvinte(atualizacaoPendente)
@@ -77,17 +78,77 @@ function recarregar() {
  * porque a essa altura a versão nova já está instalada e é ela que vai
  * responder.
  */
-export async function aplicarAtualizacao(): Promise<void> {
+export async function aplicarAtualizacao(recarregarDepois = true): Promise<void> {
   if (!aplicar || !('serviceWorker' in navigator)) {
     // Sem Service Worker (navegador sem suporte, ou aba servida em http),
     // recarregar já basta pra buscar os arquivos novos.
-    recarregar()
+    if (recarregarDepois) recarregar()
     return
   }
 
-  navigator.serviceWorker.addEventListener('controllerchange', recarregar, { once: true })
-  setTimeout(recarregar, PRAZO_RECARGA_MS)
-  await aplicar(true)
+  if (recarregarDepois) {
+    navigator.serviceWorker.addEventListener('controllerchange', recarregar, { once: true })
+    setTimeout(recarregar, PRAZO_RECARGA_MS)
+  }
+  // `false` aqui é só pra biblioteca não tentar recarregar por conta dela;
+  // ela manda o SKIP_WAITING do mesmo jeito, que é o que importa.
+  await aplicar(recarregarDepois)
+}
+
+export type ResultadoBusca = 'atualizado' | 'nova-versao' | 'sem-suporte' | 'erro'
+
+// Teto pra espera da instalação. Numa rede móvel ruim o download pode demorar,
+// mas deixar o usuário olhando "Procurando…" pra sempre é pior do que dizer
+// que não deu e pedir pra tentar de novo.
+const PRAZO_BUSCA_MS = 25_000
+
+/**
+ * Procura por versão nova AGORA, a pedido do usuário.
+ *
+ * Existe porque a checagem automática depende de o app estar aberto na hora
+ * certa, e houve um caso real de ficar preso: o conserto do próprio mecanismo
+ * de atualização estava DENTRO da versão que o cache não deixava chegar. Um
+ * botão que força a busca quebra esse ciclo sem precisar mexer nas
+ * ferramentas do navegador.
+ *
+ * `registration.update()` responde quando a BUSCA termina, não quando o
+ * Service Worker novo terminou de instalar — por isso esperamos também o
+ * estado dele mudar. Sem isso, a resposta seria "já está atualizado" mesmo
+ * com uma versão nova baixando naquele instante.
+ */
+export async function procurarAtualizacao(): Promise<ResultadoBusca> {
+  if (!('serviceWorker' in navigator)) return 'sem-suporte'
+
+  const reg = registro ?? (await navigator.serviceWorker.getRegistration())
+  if (!reg) return 'sem-suporte'
+
+  // Já havia uma esperando (de uma checagem anterior ou da sessão passada).
+  if (reg.waiting) return 'nova-versao'
+
+  try {
+    await reg.update()
+  } catch {
+    return 'erro'
+  }
+
+  const instalando = reg.installing
+  if (instalando) {
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        const aoMudar = () => {
+          if (instalando.state === 'installed' || instalando.state === 'activated' || instalando.state === 'redundant') {
+            instalando.removeEventListener('statechange', aoMudar)
+            resolve()
+          }
+        }
+        instalando.addEventListener('statechange', aoMudar)
+        aoMudar()
+      }),
+      new Promise<void>((resolve) => setTimeout(resolve, PRAZO_BUSCA_MS)),
+    ])
+  }
+
+  return reg.waiting || atualizacaoPendente ? 'nova-versao' : 'atualizado'
 }
 
 const PRAZO_RECARGA_MS = 3000
@@ -108,6 +169,7 @@ export function setupPwaUpdates() {
     },
     onRegisteredSW(_swUrl, registration) {
       if (!registration) return
+      registro = registration
 
       // Uma versão nova pode ter ficado em espera desde a última sessão: nesse
       // caso o `onNeedRefresh` não dispara de novo, e sem isto o aviso nunca

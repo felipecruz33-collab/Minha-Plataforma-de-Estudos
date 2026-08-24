@@ -1,5 +1,6 @@
 import { AlertCircle, Check, Crown, Eye, EyeOff, KeyRound, Lock, Shield } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { CartaoAtualizacao } from '../components/CartaoAtualizacao'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { useAuth } from '../lib/auth/AuthContext'
@@ -339,6 +340,8 @@ export default function Perfil() {
         )}
       </Card>
 
+      <CartaoAtualizacao />
+
       <Card className="mt-4">
         <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Diagnóstico técnico</p>
         <dl className="space-y-1 text-xs text-slate-500">
@@ -363,16 +366,8 @@ export default function Perfil() {
             <dd className="font-mono">{String(perfil.isPremium)}</dd>
           </div>
           <div className="flex justify-between gap-2">
-            <dt>Versão do app</dt>
-            <dd className="font-mono">
-              {new Date(__INFO_BUILD__.data).toLocaleString('pt-BR', {
-                day: '2-digit',
-                month: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}{' '}
-              · {__INFO_BUILD__.commit}
-            </dd>
+            <dt>Build</dt>
+            <dd className="font-mono">{__INFO_BUILD__.commit}</dd>
           </div>
         </dl>
       </Card>
