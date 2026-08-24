@@ -422,11 +422,58 @@ async function chamarGemini(apiKey: string, promptTexto: string, inicio: number)
   }
 }
 
+/**
+ * Modelo descoberto em tempo de execução quando o configurado não existe mais.
+ *
+ * Por que isso precisa existir: o catálogo desses provedores muda sem aviso —
+ * a Cerebras aposentou vários modelos, e um nome que funcionava passa a
+ * responder 404. Fixar outro nome no código só adia o mesmo problema, e
+ * chutar um nome que talvez não exista é pior ainda.
+ *
+ * Então, no 404, perguntamos ao próprio provedor quais modelos ele tem
+ * (`GET /models`, que todo endpoint compatível com OpenAI expõe) e usamos o
+ * primeiro da lista. Nada de adivinhação: o nome vem de quem manda nele.
+ *
+ * Fica em memória por instância — enquanto a função estiver quente, a
+ * descoberta acontece uma vez só.
+ */
+const modeloDescoberto = new Map<string, string>()
+
+async function descobrirModelo(
+  cfg: ProvedorOpenAiCompat,
+  apiKey: string,
+  inicio: number,
+  // Modelo que acabou de dar 404. Se for justamente o que está no cache, o
+  // cache está velho (o provedor aposentou também esse) — reconsultar é o
+  // certo, senão a instância ficaria repetindo um nome morto até esfriar.
+  modeloQueFalhou: string,
+): Promise<string | null> {
+  const jaSabido = modeloDescoberto.get(cfg.id)
+  if (jaSabido && jaSabido !== modeloQueFalhou) return jaSabido
+  if (jaSabido === modeloQueFalhou) modeloDescoberto.delete(cfg.id)
+  try {
+    const urlModelos = cfg.url.replace(/\/chat\/completions$/, '/models')
+    const { res, dados } = await postJsonComTeto<{ data?: { id?: string }[] }>(
+      urlModelos,
+      { method: 'GET', headers: { Authorization: `Bearer ${apiKey}` } },
+      inicio,
+    )
+    if (!res.ok) return null
+    const ids = (dados.data ?? []).map((m) => m.id).filter((id): id is string => !!id)
+    if (!ids.length) return null
+    console.warn(`gerar-aula: modelo de ${cfg.id} não existe mais; catálogo atual: ${ids.slice(0, 10).join(', ')}`)
+    modeloDescoberto.set(cfg.id, ids[0])
+    return ids[0]
+  } catch {
+    return null
+  }
+}
+
 // Exportada só pra permitir teste do fluxo de tentativas sem subir a função.
 export async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, promptTexto: string, inicio: number): Promise<Tentativa> {
-  const montarCorpo = (comResponseFormat: boolean) =>
+  const montarCorpo = (comResponseFormat: boolean, modelo = modeloDescoberto.get(cfg.id) ?? cfg.model) =>
     JSON.stringify({
-    model: cfg.model,
+    model: modelo,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT_GERAR_AULA + SUFIXO_JSON_MODO_OBJETO },
       { role: 'user', content: promptTexto },
@@ -484,6 +531,25 @@ export async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: stri
       if (semFormato && semFormato.res.ok) {
         console.warn(`gerar-aula: ${cfg.id} recusou response_format (400); repetido sem ele e funcionou.`)
         resultado = semFormato
+      }
+    }
+
+    // 404 = o modelo configurado saiu do catálogo. Pergunta ao provedor qual
+    // ele tem hoje e repete uma vez com esse. Se também não der, o 404
+    // original segue pra cascata, que passa pro próximo provedor.
+    if (resultado.res.status === 404) {
+      const modeloUsado = modeloDescoberto.get(cfg.id) ?? cfg.model
+      const modelo = await descobrirModelo(cfg, apiKey, inicio, modeloUsado)
+      if (modelo) {
+        const comOutroModelo = await enviar(montarCorpo(true, modelo))
+        if (comOutroModelo && comOutroModelo.res.ok) {
+          console.warn(`gerar-aula: ${cfg.id} passou a usar o modelo "${modelo}".`)
+          resultado = comOutroModelo
+        } else {
+          // Guardado só se realmente funcionou; senão a próxima chamada não
+          // deve herdar um modelo que também falha.
+          modeloDescoberto.delete(cfg.id)
+        }
       }
     }
     return { res: resultado.res, dados: resultado.dados, provedor: cfg.id }
@@ -604,6 +670,11 @@ async function chamarComReserva(
   // mensagem de erro quando nada dá certo: sem isso, "demorou demais" não
   // diz QUEM demorou, e a investigação vira adivinhação.
   diagnostico: string[] = [],
+  // Todos os status HTTP que apareceram na corrida. Serve pra decidir a
+  // ORIENTAÇÃO que vai pro usuário: um 413 no meio do caminho significa
+  // "grande demais", e essa informação se perdia quando outro provedor
+  // falhava depois por um motivo diferente.
+  statusVistos: Set<number> = new Set(),
 ): Promise<{ tentativa: Tentativa; provedorUsado: ProvedorConfig }> {
   return new Promise((resolve) => {
     let resolvido = false
@@ -634,6 +705,7 @@ async function chamarComReserva(
           const segundos = ((Date.now() - antes) / 1000).toFixed(1)
           const rotulo = tentativa.res.status === STATUS_TEMPO_ESGOTADO ? 'tempo esgotado' : String(tentativa.res.status)
           diagnostico.push(`${NOME_PROVEDOR[cfg.provedor]} ${segundos}s (${rotulo})`)
+          statusVistos.add(tentativa.res.status)
 
           if (STATUS_TENTA_PROXIMO.has(tentativa.res.status) || !respostaAproveitavel(tentativa)) {
             // Falhou de um jeito que outro provedor pode resolver: guarda como
@@ -967,15 +1039,35 @@ async function pingProvedor(cfg: ProvedorConfig, inicio: number): Promise<Record
       res = r.res
       erro = r.dados.error?.message
     }
+    // 404 = o modelo configurado não existe mais. Nesse caso vale mais mostrar
+    // o catálogo atual do provedor do que a mensagem de erro: com a lista em
+    // mãos, é só colar um nome válido em CEREBRAS_MODEL / COHERE_MODEL.
+    let modelosDisponiveis: string[] | undefined
+    if (res.status === 404 && cfg.provedor !== 'gemini') {
+      const compat =
+        cfg.provedor === 'groq' ? GROQ : cfg.provedor === 'cerebras' ? CEREBRAS : cfg.provedor === 'cohere' ? COHERE : OPENROUTER
+      try {
+        const lista = await postJsonComTeto<{ data?: { id?: string }[] }>(
+          compat.url.replace(/\/chat\/completions$/, '/models'),
+          { method: 'GET', headers: { Authorization: `Bearer ${cfg.chave}` } },
+          inicio,
+        )
+        if (lista.res.ok) modelosDisponiveis = (lista.dados.data ?? []).map((m) => m.id).filter((i): i is string => !!i).slice(0, 20)
+      } catch {
+        // Sem catálogo, a mensagem de erro original já basta.
+      }
+    }
+
     return {
       provedor: nome,
       modelo,
       ok: res.ok,
       status: res.status,
       ms: Date.now() - antes,
-      // 400 aqui costuma ser o teto de 1 token, não problema de chave; o que
-      // importa distinguir é 401/403 (chave), 404 (modelo) e 429 (cota).
+      // O que importa distinguir é 401/403 (chave errada), 404 (modelo fora do
+      // catálogo) e 429 (cota esgotada agora).
       detalhe: res.ok ? undefined : erro?.slice(0, 200),
+      modelosDisponiveis,
     }
   } catch (err) {
     return {
@@ -1111,7 +1203,14 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
       .join('\n\n')
 
     const diagnostico: string[] = []
-    const { tentativa, provedorUsado } = await chamarComReserva(provedores, userText, inicio, diagnostico)
+    const statusVistos = new Set<number>()
+    const { tentativa, provedorUsado } = await chamarComReserva(provedores, userText, inicio, diagnostico, statusVistos)
+    // 413 é "pedido grande demais pro limite daquele provedor". Se ele
+    // apareceu em QUALQUER tentativa, dividir o PDF ajuda -- mesmo que a
+    // última falha tenha sido outra coisa (chave errada, cota). Sem isso, o
+    // usuário via um beco sem saída em vez do botão de dividir, justamente no
+    // caso em que dividir era a solução.
+    const houveExcessoDeTamanho = statusVistos.has(413)
     const iaRes = tentativa.res
 
     if (!iaRes.ok) {
@@ -1171,6 +1270,7 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
       responder(502, {
         ok: false,
         error: `${NOME_PROVEDOR[provedorUsado.provedor]} recusou o pedido (${iaRes.status})${detalhe ? `: ${detalhe}` : ''}. Tentativas: ${diagnostico.join(' · ')}.`,
+        tamanhoExcessivo: houveExcessoDeTamanho,
       })
       return
     }
