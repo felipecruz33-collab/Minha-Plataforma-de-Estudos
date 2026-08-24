@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
+import { AvisoNovaVersao } from './components/AvisoNovaVersao'
 import { AppShell } from './components/layout/AppShell'
 import { AuthProvider, useAuth } from './lib/auth/AuthContext'
 import Adicionar from './pages/Adicionar'
@@ -74,6 +75,9 @@ export default function App() {
   return (
     <AuthProvider>
       <AppRoutes />
+      {/* Fora das rotas: o aviso precisa aparecer em qualquer tela, inclusive
+          na de login e enquanto o perfil ainda está carregando. */}
+      <AvisoNovaVersao />
     </AuthProvider>
   )
 }
