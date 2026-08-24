@@ -3,7 +3,23 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
 
+// Identificação da build, gravada no pacote no momento em que ele é gerado.
+//
+// Existe porque "o deploy saiu?" e "seu navegador está com a versão nova?" são
+// perguntas diferentes, e sem isto as duas se confundiam: a única forma de
+// responder era procurar na tela algum detalhe visual que só existe na versão
+// nova. Agora o Perfil mostra data e commit, e a resposta é direta.
+//
+// VERCEL_GIT_COMMIT_SHA é preenchido pela própria Vercel durante o build.
+const INFO_BUILD = {
+  data: new Date().toISOString(),
+  commit: (process.env.VERCEL_GIT_COMMIT_SHA ?? '').slice(0, 7) || 'local',
+}
+
 export default defineConfig({
+  define: {
+    __INFO_BUILD__: JSON.stringify(INFO_BUILD),
+  },
   plugins: [
     react(),
     VitePWA({
