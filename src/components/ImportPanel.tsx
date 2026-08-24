@@ -204,7 +204,12 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
         nomeEscolhido ?? undefined,
         alvo.nomeArquivo,
         perfil?.chaveGemini,
-        (parte, total) => setEtapa(`Montando a aula: etapa ${parte} de ${total} (cada etapa pode levar alguns minutos)…`),
+        (concluidas, total) =>
+          setEtapa(
+            concluidas === 0
+              ? `Montando a aula: processando ${total} trechos em paralelo…`
+              : `Montando a aula: ${concluidas} de ${total} trechos prontos…`,
+          ),
       )
       await salvarPayloadsGerados(payloads, alvo.nomeArquivo, nomeEscolhido)
     } catch (e) {
@@ -342,13 +347,12 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
         {pdfMuitoGrande && !busy && (
           <div className="flex flex-col items-start gap-2 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">
             <p>
-              Esse PDF é grande demais para a IA gerar de uma vez. Posso processá-lo em {pdfMuitoGrande.partes} etapas e juntar tudo
-              em <span className="font-semibold">uma única aula</span> no final. Vai demorar mais, mas o resultado é uma aula
-              completa.
+              Esse PDF é grande demais para a IA gerar de uma vez. Posso quebrá-lo em {pdfMuitoGrande.partes} trechos, processar
+              vários ao mesmo tempo e juntar tudo em <span className="font-semibold">uma única aula</span> no final.
             </p>
             <Button type="button" variant="secondary" onClick={onDividirPdf} className="!py-1.5 !text-sm">
               <Scissors className="h-4 w-4" strokeWidth={1.75} />
-              Processar em {pdfMuitoGrande.partes} etapas e montar a aula
+              Processar {pdfMuitoGrande.partes} trechos e montar a aula
             </Button>
           </div>
         )}
