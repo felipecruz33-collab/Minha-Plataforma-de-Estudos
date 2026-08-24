@@ -21,7 +21,9 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   const [etapa, setEtapa] = useState<string | null>(null)
   const [errors, setErrors] = useState<string[]>([])
   const [sucesso, setSucesso] = useState<string | null>(null)
-  const [pdfMuitoGrande, setPdfMuitoGrande] = useState<{ texto: string; nomeArquivo: string; partes: number } | null>(null)
+  const [pdfMuitoGrande, setPdfMuitoGrande] = useState<{ texto: string; numPaginas: number; nomeArquivo: string; partes: number } | null>(
+    null,
+  )
 
   if (!user) return null
 
@@ -146,30 +148,30 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
     try {
       setEtapa('Lendo o PDF…')
       const { extrairTextoPdf, gerarAulaViaIA, partesRecomendadas } = await import('../lib/ai/pdfToAula')
-      const texto = await extrairTextoPdf(file)
+      const { texto, numPaginas } = await extrairTextoPdf(file)
       if (!texto) throw new Error('Não foi possível extrair texto deste PDF (pode ser um PDF escaneado sem OCR).')
 
-      const partes = partesRecomendadas(texto.length)
+      const partes = partesRecomendadas(numPaginas)
       if (partes > 1) {
         // Já dá pra saber de antemão que é grande demais — nem tenta gerar
         // de uma vez só (evitaria só bater no limite de tempo/tokens e
         // devolver um erro confuso). Oferece a divisão direto.
-        setPdfMuitoGrande({ texto, nomeArquivo: file.name, partes })
+        setPdfMuitoGrande({ texto, numPaginas, nomeArquivo: file.name, partes })
         return
       }
 
       setEtapa('Gerando a aula com IA (pode levar até 1 minuto)…')
-      const payloads = await gerarAulaViaIA(texto, nomeEscolhido, file.name, perfil?.chaveGemini)
+      const payloads = await gerarAulaViaIA(texto, numPaginas, nomeEscolhido, file.name, perfil?.chaveGemini)
       await salvarPayloadsGerados(payloads, file.name, nomeEscolhido)
     } catch (e) {
       const { PdfMuitoGrandeError, partesRecomendadas } = await import('../lib/ai/pdfToAula')
       const mensagem = e instanceof Error ? e.message : 'Erro inesperado ao gerar a aula a partir do PDF.'
       setErrors([mensagem])
       if (e instanceof PdfMuitoGrandeError) {
-        // Mesmo um texto "dentro do esperado" às vezes falha na prática — se
+        // Mesmo um PDF "dentro do esperado" às vezes falha na prática — se
         // isso acontecer, sempre oferece pelo menos 2 partes.
-        const partes = Math.max(2, partesRecomendadas(e.textoCompleto.length))
-        setPdfMuitoGrande({ texto: e.textoCompleto, nomeArquivo: file.name, partes })
+        const partes = Math.max(2, partesRecomendadas(e.numPaginas))
+        setPdfMuitoGrande({ texto: e.textoCompleto, numPaginas: e.numPaginas, nomeArquivo: file.name, partes })
       }
       await repo.addGeracao({
         userId: user!.id,
@@ -197,6 +199,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
       const { gerarAulaViaIADividida } = await import('../lib/ai/pdfToAula')
       const payloads = await gerarAulaViaIADividida(
         alvo.texto,
+        alvo.numPaginas,
         alvo.partes,
         nomeEscolhido ?? undefined,
         alvo.nomeArquivo,
