@@ -50,7 +50,12 @@ export interface DataRepository {
   getPerfil(userId: string, email: string): Promise<Perfil>
   atualizarNome(userId: string, nome: string): Promise<Perfil>
   salvarChaveGemini(userId: string, chave: string | null): Promise<Perfil>
+  /** Concede ou remove Premium. Só o administrador consegue (checado no banco, não só na tela). */
   setPremium(userId: string, value: boolean): Promise<void>
+  /** Exclui a conta e TODO o conteúdo dela. Só o administrador, e nunca a própria conta. */
+  excluirUsuario(userId: string): Promise<void>
+  /** Quantos PDFs distintos esta conta já converteu com a IA (para o limite do plano gratuito). */
+  contarPdfsImportados(userId: string): Promise<number>
   toggleFavorito(userId: string, questaoId: string): Promise<Perfil>
   /** Só retorna dados úteis para o administrador — ver RLS em 0003_admin_lista_usuarios.sql. */
   listPerfis(): Promise<Perfil[]>

@@ -4,12 +4,20 @@ import { Link } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { useAuth } from '../lib/auth/AuthContext'
-import { BIBLIOTECA_ABERTA_PARA_TODOS } from '../lib/premium'
+import { BIBLIOTECA_ABERTA_PARA_TODOS, LIMITE_PDF_GRATIS } from '../lib/premium'
 import { repo, usingSupabase } from '../lib/repo'
 
 const RECURSOS = [
   { nome: 'Sua biblioteca pessoal (matérias, aulas, questões)', gratis: true, premium: true },
-  { nome: 'Importação de PDF com IA e arquivo .json', gratis: true, premium: true },
+  { nome: 'Importação de arquivo .json (sem limite)', gratis: true, premium: true },
+  {
+    // A conversão de PDF é o único recurso que gasta cota de IA de verdade a
+    // cada uso — por isso é ela que tem limite no plano gratuito, e não a
+    // importação de .json, onde o conteúdo já vem pronto.
+    nome: `PDF com IA: ${LIMITE_PDF_GRATIS} no plano gratuito, sem limite no Premium`,
+    gratis: true,
+    premium: true,
+  },
   { nome: 'Desempenho, simulados, favoritos e revisão', gratis: true, premium: true },
   { nome: 'Sem anúncios', gratis: true, premium: true },
   {
@@ -51,9 +59,12 @@ export default function Premium() {
       await repo.setPremium(user.id, true)
       await refreshPerfil()
     } catch (e) {
+      // Pra usuário comum, o banco recusa a mudança de propósito (só admin
+      // muda is_premium — ver 0012_admin_premium_e_exclusao.sql). Dizer "erro"
+      // seria enganoso: não quebrou nada, a cobrança é que ainda não existe.
       setErro(
         usingSupabase
-          ? 'A ativação do Premium acontece pelo backend após a confirmação do Google Play Billing (webhook), não diretamente pelo app.'
+          ? 'A assinatura pela Google Play ainda não está ativa neste app. Enquanto isso, o administrador pode liberar o Premium para a sua conta — é só pedir.'
           : e instanceof Error
             ? e.message
             : 'Não foi possível ativar o Premium.',

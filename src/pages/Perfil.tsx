@@ -1,4 +1,4 @@
-import { AlertCircle, Check, Crown, Eye, EyeOff, KeyRound, Shield } from 'lucide-react'
+import { AlertCircle, Check, Crown, Eye, EyeOff, KeyRound, Lock, Shield } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
@@ -6,7 +6,7 @@ import { useAuth } from '../lib/auth/AuthContext'
 import { usingSupabase } from '../lib/repo'
 
 export default function Perfil() {
-  const { perfil, atualizarNome, salvarChaveGemini } = useAuth()
+  const { perfil, atualizarNome, salvarChaveGemini, alterarSenha } = useAuth()
   const [nome, setNome] = useState(perfil?.nome ?? '')
   const [salvando, setSalvando] = useState(false)
   const [salvo, setSalvo] = useState(false)
@@ -25,7 +25,49 @@ export default function Perfil() {
     setChave(chaveGravada ?? '')
   }, [chaveGravada])
 
+  const [senhaAtual, setSenhaAtual] = useState('')
+  const [novaSenha, setNovaSenha] = useState('')
+  const [confirmaSenha, setConfirmaSenha] = useState('')
+  const [mostrarSenhas, setMostrarSenhas] = useState(false)
+  const [trocandoSenha, setTrocandoSenha] = useState(false)
+  const [senhaTrocada, setSenhaTrocada] = useState(false)
+  const [erroSenha, setErroSenha] = useState<string | null>(null)
+
   if (!perfil) return null
+
+  async function trocarSenha(e: React.FormEvent) {
+    e.preventDefault()
+    setErroSenha(null)
+    setSenhaTrocada(false)
+
+    // Conferidas aqui pra não gastar uma ida ao servidor com algo que a
+    // própria tela já sabe que está errado.
+    if (novaSenha.length < 6) {
+      setErroSenha('A nova senha precisa ter pelo menos 6 caracteres.')
+      return
+    }
+    if (novaSenha !== confirmaSenha) {
+      setErroSenha('A confirmação não bate com a nova senha.')
+      return
+    }
+    if (novaSenha === senhaAtual) {
+      setErroSenha('A nova senha é igual à atual.')
+      return
+    }
+
+    setTrocandoSenha(true)
+    try {
+      await alterarSenha(senhaAtual, novaSenha)
+      setSenhaAtual('')
+      setNovaSenha('')
+      setConfirmaSenha('')
+      setSenhaTrocada(true)
+    } catch (err) {
+      setErroSenha(err instanceof Error ? err.message : 'Não foi possível trocar a senha.')
+    } finally {
+      setTrocandoSenha(false)
+    }
+  }
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault()
@@ -132,6 +174,79 @@ export default function Perfil() {
             ) : (
               'Salvar'
             )}
+          </Button>
+        </form>
+      </Card>
+
+      <Card className="mt-4">
+        <div className="mb-2 flex items-center gap-2">
+          <Lock className="h-4 w-4 text-brand-blue" strokeWidth={1.75} />
+          <h2 className="font-semibold text-navy">Trocar senha</h2>
+        </div>
+        <form onSubmit={trocarSenha}>
+          <label className="mb-3 block text-sm">
+            <span className="mb-1 block font-medium text-slate-600">Senha atual</span>
+            <input
+              type={mostrarSenhas ? 'text' : 'password'}
+              value={senhaAtual}
+              onChange={(e) => {
+                setSenhaAtual(e.target.value)
+                setSenhaTrocada(false)
+                setErroSenha(null)
+              }}
+              autoComplete="current-password"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-blue"
+            />
+          </label>
+          <label className="mb-3 block text-sm">
+            <span className="mb-1 block font-medium text-slate-600">Nova senha</span>
+            <input
+              type={mostrarSenhas ? 'text' : 'password'}
+              value={novaSenha}
+              onChange={(e) => {
+                setNovaSenha(e.target.value)
+                setSenhaTrocada(false)
+                setErroSenha(null)
+              }}
+              autoComplete="new-password"
+              placeholder="Pelo menos 6 caracteres"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-blue"
+            />
+          </label>
+          <label className="mb-2 block text-sm">
+            <span className="mb-1 block font-medium text-slate-600">Repita a nova senha</span>
+            <input
+              type={mostrarSenhas ? 'text' : 'password'}
+              value={confirmaSenha}
+              onChange={(e) => {
+                setConfirmaSenha(e.target.value)
+                setSenhaTrocada(false)
+                setErroSenha(null)
+              }}
+              autoComplete="new-password"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-blue"
+            />
+          </label>
+          <label className="mb-3 flex items-center gap-2 text-sm text-slate-600">
+            <input type="checkbox" checked={mostrarSenhas} onChange={(e) => setMostrarSenhas(e.target.checked)} />
+            Mostrar as senhas
+          </label>
+
+          {erroSenha && (
+            <p className="mb-2 flex items-start gap-1.5 text-sm text-red-600">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.75} />
+              <span>{erroSenha}</span>
+            </p>
+          )}
+          {senhaTrocada && (
+            <p className="mb-2 flex items-start gap-1.5 text-sm text-emerald-700">
+              <Check className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2} />
+              <span>Senha alterada. Use a nova da próxima vez que entrar.</span>
+            </p>
+          )}
+
+          <Button type="submit" disabled={trocandoSenha || !senhaAtual || !novaSenha || !confirmaSenha}>
+            {trocandoSenha ? 'Trocando…' : 'Trocar senha'}
           </Button>
         </form>
       </Card>

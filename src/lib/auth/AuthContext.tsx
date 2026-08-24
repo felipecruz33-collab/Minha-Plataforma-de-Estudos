@@ -15,6 +15,7 @@ interface AuthContextValue {
   toggleFavorito: (questaoId: string) => Promise<void>
   atualizarNome: (nome: string) => Promise<void>
   salvarChaveGemini: (chave: string | null) => Promise<void>
+  alterarSenha: (senhaAtual: string, novaSenha: string) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -165,9 +166,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user],
   )
 
+  const alterarSenha = useCallback(
+    async (senhaAtual: string, novaSenha: string) => {
+      if (!user) throw new Error('Você precisa estar logado.')
+
+      if (isSupabaseConfigured && supabase) {
+        // O Supabase troca a senha só com a sessão ativa, sem pedir a atual.
+        // Conferimos a atual de propósito: um celular esquecido desbloqueado,
+        // ou uma sessão deixada aberta num computador emprestado, viraria
+        // sequestro de conta em dois toques — e a pessoa perderia o acesso.
+        const { error: erroSenha } = await supabase.auth.signInWithPassword({ email: user.email, password: senhaAtual })
+        if (erroSenha) throw new Error('A senha atual está incorreta.')
+
+        const { error } = await supabase.auth.updateUser({ password: novaSenha })
+        if (error) throw error
+      } else {
+        localAuth.alterarSenha(user.id, senhaAtual, novaSenha)
+      }
+    },
+    [user],
+  )
+
   const value = useMemo(
-    () => ({ loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome, salvarChaveGemini }),
-    [loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome, salvarChaveGemini],
+    () => ({ loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome, salvarChaveGemini, alterarSenha }),
+    [loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome, salvarChaveGemini, alterarSenha],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

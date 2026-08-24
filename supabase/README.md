@@ -20,6 +20,8 @@ desenvolvimento/demonstração sem backend.
    - `migrations/0008_perfil_chave_gemini.sql`
    - `migrations/0009_biblioteca_aberta.sql`
    - `migrations/0010_aula_ordem.sql`
+   - `migrations/0011_biblioteca_premium.sql`
+   - `migrations/0012_admin_premium_e_exclusao.sql`
 3. Copie `.env.example` para `.env.local` e preencha:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
