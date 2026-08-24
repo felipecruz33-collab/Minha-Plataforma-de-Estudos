@@ -5,11 +5,26 @@ interface ConfirmDialogProps {
   title: string
   description?: string
   confirmLabel?: string
+  /**
+   * Cor do botão de confirmar. Vermelho é o padrão porque a maioria dos usos
+   * apaga alguma coisa — mas pintar de vermelho uma ação inofensiva (limpar
+   * cache, por exemplo) ensina o usuário a ignorar o alerta quando ele for de
+   * verdade.
+   */
+  confirmVariant?: 'danger' | 'primary'
   onConfirm: () => void
   onCancel: () => void
 }
 
-export function ConfirmDialog({ open, title, description, confirmLabel = 'Excluir', onConfirm, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({
+  open,
+  title,
+  description,
+  confirmLabel = 'Excluir',
+  confirmVariant = 'danger',
+  onConfirm,
+  onCancel,
+}: ConfirmDialogProps) {
   if (!open) return null
   return (
     <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 p-4 sm:items-center" onClick={onCancel}>
@@ -25,7 +40,7 @@ export function ConfirmDialog({ open, title, description, confirmLabel = 'Exclui
           <Button variant="secondary" onClick={onCancel}>
             Cancelar
           </Button>
-          <Button variant="danger" onClick={onConfirm}>
+          <Button variant={confirmVariant} onClick={onConfirm}>
             {confirmLabel}
           </Button>
         </div>

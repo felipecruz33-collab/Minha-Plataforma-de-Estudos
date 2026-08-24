@@ -95,6 +95,46 @@ export async function aplicarAtualizacao(recarregarDepois = true): Promise<void>
   await aplicar(recarregarDepois)
 }
 
+/**
+ * Apaga tudo que o navegador guardou do app e recarrega do servidor.
+ *
+ * É a saída de emergência pra quando a atualização normal não passa. Aconteceu
+ * de verdade: num aparelho o app ficou preso numa versão antiga mesmo depois
+ * de fechar e abrir, e a única solução foi abrir as ferramentas do
+ * desenvolvedor do navegador — algo que ninguém deveria precisar fazer.
+ *
+ * NÃO apaga nada seu: matérias, aulas, questões, respostas e a chave de IA
+ * ficam no Supabase (ou no armazenamento do navegador, que também não é
+ * tocado). O que some é só a cópia dos ARQUIVOS do app — que é justamente o
+ * que está velho.
+ */
+export async function limparCacheDoApp(): Promise<void> {
+  if ('serviceWorker' in navigator) {
+    try {
+      const registros = await navigator.serviceWorker.getRegistrations()
+      await Promise.all(registros.map((r) => r.unregister()))
+    } catch {
+      // Segue mesmo assim: limpar os caches abaixo já ajuda.
+    }
+  }
+
+  if ('caches' in window) {
+    try {
+      const nomes = await caches.keys()
+      await Promise.all(nomes.map((n) => caches.delete(n)))
+    } catch {
+      // idem
+    }
+  }
+
+  // `reload()` pode ser servido pelo cache de navegação do próprio navegador.
+  // Trocar a URL por uma com marca de tempo obriga uma busca nova no servidor,
+  // e o `replace` evita empilhar isso no histórico do botão "voltar".
+  const url = new URL(window.location.href)
+  url.searchParams.set('recarregado', String(Date.now()))
+  window.location.replace(url.toString())
+}
+
 export type ResultadoBusca = 'atualizado' | 'nova-versao' | 'sem-suporte' | 'erro'
 
 // Teto pra espera da instalação. Numa rede móvel ruim o download pode demorar,
