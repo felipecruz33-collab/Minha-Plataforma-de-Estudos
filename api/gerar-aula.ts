@@ -37,7 +37,7 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MO
 // no momento, já filtrando por quem suporta o que o pedido precisa
 // (aqui, saída estruturada) — evita fixar um modelo `:free` específico, que
 // entra e sai de linha com frequência.
-interface ProvedorOpenAiCompat {
+export interface ProvedorOpenAiCompat {
   id: 'groq' | 'openrouter' | 'cerebras' | 'cohere'
   url: string
   model: string
@@ -80,7 +80,7 @@ const OPENROUTER: ProvedorOpenAiCompat = {
 // 1M tokens/dia e ~30 mil tokens/minuto (bem mais folgado que os 8 mil da
 // Groq), mas com janela de contexto de 8K no grátis — por isso o teto de
 // saída aqui é baixo, como na Groq.
-const CEREBRAS: ProvedorOpenAiCompat = {
+export const CEREBRAS: ProvedorOpenAiCompat = {
   id: 'cerebras',
   url: 'https://api.cerebras.ai/v1/chat/completions',
   model: process.env.CEREBRAS_MODEL?.trim() || 'llama-4-scout-17b-16e-instruct',
@@ -204,6 +204,13 @@ interface GeminiResponse {
 
 // Formato compatível com OpenAI, compartilhado pela Groq e pela OpenRouter.
 interface OpenAiCompatResponse {
+  // Cada provedor guarda a mensagem de erro num lugar diferente: a OpenAI (e
+  // quem a copia) usa `error.message`, mas a Cerebras devolve `message` na
+  // raiz e a Cohere às vezes usa `detail`. Ler só um deles deixava a mensagem
+  // vazia, e o usuário via um genérico "A IA recusou o pedido" que não dizia
+  // nada -- nem pra ele, nem pra quem fosse investigar.
+  message?: string
+  detail?: string
   choices?: {
     // `content` é string na maioria dos provedores, mas o endpoint compatível
     // da Cohere e alguns modelos sorteados pela OpenRouter devolvem a forma
@@ -415,16 +422,22 @@ async function chamarGemini(apiKey: string, promptTexto: string, inicio: number)
   }
 }
 
-async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, promptTexto: string, inicio: number): Promise<Tentativa> {
-  const corpoRequisicao = JSON.stringify({
+// Exportada só pra permitir teste do fluxo de tentativas sem subir a função.
+export async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, promptTexto: string, inicio: number): Promise<Tentativa> {
+  const montarCorpo = (comResponseFormat: boolean) =>
+    JSON.stringify({
     model: cfg.model,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT_GERAR_AULA + SUFIXO_JSON_MODO_OBJETO },
       { role: 'user', content: promptTexto },
     ],
-    response_format: cfg.aceitaJsonSchema
-      ? { type: 'json_schema', json_schema: { name: 'aula_gerada', strict: true, schema: AULA_GERADA_JSON_SCHEMA } }
-      : { type: 'json_object' },
+    ...(comResponseFormat
+      ? {
+          response_format: cfg.aceitaJsonSchema
+            ? { type: 'json_schema', json_schema: { name: 'aula_gerada', strict: true, schema: AULA_GERADA_JSON_SCHEMA } }
+            : { type: 'json_object' },
+        }
+      : {}),
     [cfg.campoMaxTokens]: cfg.maxTokensSaida,
     // Mesmo problema do "pensamento" do Gemini: os modelos gpt-oss da Groq
     // são modelos de raciocínio e vêm com reasoning_effort "medium" por
@@ -436,28 +449,48 @@ async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, pro
     ...(cfg.id === 'groq' ? { reasoning_effort: 'low' } : {}),
   })
 
-  const esperasEntreTentativas = [0, 3000]
-  let res: Response
-  let dados: OpenAiCompatResponse
-  try {
+  const enviar = async (corpo: string) => {
+    const esperas = [0, 3000]
+    let res: Response
+    let dados: OpenAiCompatResponse
     do {
-      const espera = esperasEntreTentativas.shift()!
+      const espera = esperas.shift()!
       if (espera) {
-        if (msRestantes(inicio) <= espera) return tentativaTempoEsgotado(cfg.id)
+        if (msRestantes(inicio) <= espera) return null
         await new Promise((r) => setTimeout(r, espera))
       }
       ;({ res, dados } = await postJsonComTeto<OpenAiCompatResponse>(
         cfg.url,
-        { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, body: corpoRequisicao },
+        { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, body: corpo },
         inicio,
       ))
-    } while (res.status === 503 && esperasEntreTentativas.length > 0)
+    } while (res.status === 503 && esperas.length > 0)
+    return { res, dados }
+  }
+
+  try {
+    let resultado = await enviar(montarCorpo(true))
+    if (!resultado) return tentativaTempoEsgotado(cfg.id)
+
+    // 400 com `response_format` é o modo de falha mais comum entre provedores
+    // diferentes: o catálogo de cada um muda, e nem todo modelo aceita o modo
+    // JSON (a Cerebras e a Cohere expõem endpoints compatíveis com a OpenAI,
+    // mas nem todos os modelos deles suportam esse parâmetro). Como a resposta
+    // já passa por `normalizarSaidaIA` de qualquer jeito, pedir sem o modo JSON
+    // é uma degradação de verdade -- o modelo continua instruído a devolver
+    // JSON pelo texto do prompt -- e é melhor do que perder o provedor inteiro.
+    if (resultado.res.status === 400) {
+      const semFormato = await enviar(montarCorpo(false))
+      if (semFormato && semFormato.res.ok) {
+        console.warn(`gerar-aula: ${cfg.id} recusou response_format (400); repetido sem ele e funcionou.`)
+        resultado = semFormato
+      }
+    }
+    return { res: resultado.res, dados: resultado.dados, provedor: cfg.id }
   } catch (err) {
     console.error(`gerar-aula: chamada à ${cfg.id} abortada/falhou:`, err instanceof Error ? err.message : err)
     return tentativaTempoEsgotado(cfg.id)
   }
-
-  return { res, dados, provedor: cfg.id }
 }
 
 interface ProvedorConfig {
@@ -489,9 +522,21 @@ async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string, inicio: 
 // run out of funds" e a mensagem foi direto pro usuário, derrubando o pedido
 // — mesmo com outro provedor disponível e funcionando. Chave inválida, sem
 // saldo ou sem permissão é problema DAQUELE provedor, e outro pode atender.
-// 404 idem (modelo que saiu do catálogo). 400 fica de fora de propósito: é
-// erro na nossa requisição, que se repetiria em qualquer provedor.
-const STATUS_TENTA_PROXIMO = new Set([401, 402, 403, 404, 413, 429, 503, STATUS_TEMPO_ESGOTADO])
+// 404 idem (modelo que saiu do catálogo).
+//
+// 400 estava fora daqui com o argumento de que "é erro na nossa requisição,
+// que se repetiria em qualquer provedor". Esse argumento estava errado: os
+// provedores NÃO aceitam as mesmas coisas. Um modelo que não suporta
+// `response_format: json_object` responde 400; texto acima da janela de
+// contexto daquele modelo específico responde 400; parâmetro que só existe
+// num provedor responde 400. Nos três casos, o provedor seguinte pode
+// atender numa boa -- e, do jeito que estava, o pedido inteiro morria na
+// hora com "A IA recusou o pedido".
+//
+// Se REALMENTE for erro nosso, todos vão devolver 400 e a mensagem final
+// mostra isso na lista de tentativas. O custo de tentar é baixo; o custo de
+// não tentar era perder o pedido.
+const STATUS_TENTA_PROXIMO = new Set([400, 401, 402, 403, 404, 413, 429, 503, STATUS_TEMPO_ESGOTADO])
 
 /** Nome legível de cada provedor, pra mensagens de erro e diagnóstico. */
 const NOME_PROVEDOR: Record<ProvedorConfig['provedor'], string> = {
@@ -645,7 +690,7 @@ function extrairResultado(t: Tentativa): ResultadoExtraido {
     texto: textoDaMensagem(escolha?.message?.content),
     bloqueadoMotivo: escolha?.finish_reason === 'content_filter' ? 'content_filter' : undefined,
     cortado: escolha?.finish_reason === 'length',
-    erroMensagem: t.dados.error?.message,
+    erroMensagem: t.dados.error?.message ?? t.dados.message ?? t.dados.detail,
   }
 }
 
@@ -899,7 +944,7 @@ async function pingProvedor(cfg: ProvedorConfig, inicio: number): Promise<Record
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.chave },
           body: JSON.stringify({
             contents: [{ role: 'user', parts: [{ text: 'ok' }] }],
-            generationConfig: { maxOutputTokens: 1, ...configThinking(varianteThinkingConhecida ?? 'nenhuma') },
+            generationConfig: { maxOutputTokens: 16, ...configThinking(varianteThinkingConhecida ?? 'nenhuma') },
           }),
         },
         inicio,
@@ -915,7 +960,7 @@ async function pingProvedor(cfg: ProvedorConfig, inicio: number): Promise<Record
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.chave}` },
-          body: JSON.stringify({ model: compat.model, messages: [{ role: 'user', content: 'ok' }], [compat.campoMaxTokens]: 1 }),
+          body: JSON.stringify({ model: compat.model, messages: [{ role: 'user', content: 'ok' }], [compat.campoMaxTokens]: 16 }),
         },
         inicio,
       )
@@ -1119,7 +1164,14 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
       }
       const extraidoErro = extrairResultado(tentativa)
       console.error('gerar-aula: IA retornou erro:', provedorUsado.provedor, iaRes.status, extraidoErro.erroMensagem)
-      responder(502, { ok: false, error: extraidoErro.erroMensagem || 'A IA recusou o pedido. Tente novamente.' })
+      // Nome do provedor, status e lista de tentativas SEMPRE entram. Antes,
+      // quando o provedor não mandava mensagem, sobrava só "A IA recusou o
+      // pedido" -- impossível saber qual dos cinco recusou, e por quê.
+      const detalhe = extraidoErro.erroMensagem?.trim()
+      responder(502, {
+        ok: false,
+        error: `${NOME_PROVEDOR[provedorUsado.provedor]} recusou o pedido (${iaRes.status})${detalhe ? `: ${detalhe}` : ''}. Tentativas: ${diagnostico.join(' · ')}.`,
+      })
       return
     }
 
