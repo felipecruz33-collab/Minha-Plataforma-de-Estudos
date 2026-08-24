@@ -3,6 +3,7 @@ import { AulaGeradaIntermediateSchema, TIPOS_BLOCO_IA } from '../src/lib/aiInter
 import { SYSTEM_PROMPT_GERAR_AULA } from '../src/lib/aiPrompt.js'
 import { AulaGeradaSchema } from '../src/lib/aiSchema.js'
 import { compilarAulas } from '../src/lib/lessonCompiler.js'
+import { extrairJson, normalizarSaidaIA } from '../src/lib/ai/normalizarSaidaIA.js'
 
 // Texto extraído do PDF vem em base64 do cliente; ~4.4MB é o limite prático
 // de corpo de requisição em funções serverless da Vercel — fica com folga.
@@ -41,6 +42,17 @@ interface ProvedorOpenAiCompat {
   url: string
   model: string
   campoMaxTokens: 'max_completion_tokens' | 'max_tokens'
+  // A OpenRouter aceita `response_format: json_schema`, que faz o roteador
+  // dela escolher um modelo capaz de respeitar a estrutura — bem melhor que
+  // só pedir "JSON válido". Na Groq mantemos `json_object`, que é o modo
+  // confirmado como suportado pelos gpt-oss.
+  aceitaJsonSchema: boolean
+  // Teto de saída próprio. A Groq no plano grátis limita 8000 tokens POR
+  // MINUTO e conta o teto pedido dentro dessa conta — o erro dela era
+  // literalmente "Limit 8000, Requested 59822". Pedindo menos, ela passa a
+  // caber no próprio limite e vira uma opção útil: é de longe a mais rápida
+  // das três (roda em hardware dedicado a inferência).
+  maxTokensSaida: number
 }
 
 const GROQ: ProvedorOpenAiCompat = {
@@ -48,6 +60,8 @@ const GROQ: ProvedorOpenAiCompat = {
   url: 'https://api.groq.com/openai/v1/chat/completions',
   model: 'openai/gpt-oss-120b',
   campoMaxTokens: 'max_completion_tokens',
+  aceitaJsonSchema: false,
+  maxTokensSaida: 4000,
 }
 
 // A OpenRouter documenta seu próprio parâmetro normalizado como "max_tokens"
@@ -58,6 +72,8 @@ const OPENROUTER: ProvedorOpenAiCompat = {
   url: 'https://openrouter.ai/api/v1/chat/completions',
   model: 'openrouter/free',
   campoMaxTokens: 'max_tokens',
+  aceitaJsonSchema: true,
+  maxTokensSaida: 12000,
 }
 
 // JSON Schema do formato INTERMEDIÁRIO (semântico — sem HTML, sem "ordem").
@@ -347,8 +363,10 @@ async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, pro
       { role: 'system', content: SYSTEM_PROMPT_GERAR_AULA + SUFIXO_JSON_MODO_OBJETO },
       { role: 'user', content: promptTexto },
     ],
-    response_format: { type: 'json_object' },
-    [cfg.campoMaxTokens]: MAX_TOKENS_SAIDA,
+    response_format: cfg.aceitaJsonSchema
+      ? { type: 'json_schema', json_schema: { name: 'aula_gerada', strict: true, schema: AULA_GERADA_JSON_SCHEMA } }
+      : { type: 'json_object' },
+    [cfg.campoMaxTokens]: cfg.maxTokensSaida,
     // Mesmo problema do "pensamento" do Gemini: os modelos gpt-oss da Groq
     // são modelos de raciocínio e vêm com reasoning_effort "medium" por
     // padrão, o que gasta tempo antes de escrever a resposta. Aqui a tarefa
@@ -747,13 +765,16 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
 
     let bruto: unknown
     try {
-      bruto = JSON.parse(textoResposta)
+      bruto = JSON.parse(extrairJson(textoResposta))
     } catch {
       responder(502, { ok: false, error: 'A IA devolveu um JSON inválido. Tente novamente.' })
       return
     }
 
-    let validado = AulaGeradaIntermediateSchema.safeParse(bruto)
+    // Acerta a embalagem antes de validar: campo omitido em vez de vazio, ano
+    // como número, alternativas como objeto... A IA costuma acertar o
+    // conteúdo e errar a forma, e rejeitar isso jogaria fora uma geração boa.
+    let validado = AulaGeradaIntermediateSchema.safeParse(normalizarSaidaIA(bruto, materiaOverride))
 
     // Se a estrutura veio errada, dá uma chance de reparo: manda de volta o
     // que a IA gerou + os erros específicos do schema, pedindo pra corrigir
@@ -790,15 +811,18 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
       }
       textoResposta = extrairResultado(reparo).texto
       try {
-        bruto = JSON.parse(textoResposta)
+        bruto = JSON.parse(extrairJson(textoResposta))
       } catch {
         responder(502, { ok: false, error: 'A IA devolveu um JSON inválido mesmo após a correção. Tente novamente.' })
         return
       }
-      validado = AulaGeradaIntermediateSchema.safeParse(bruto)
+      validado = AulaGeradaIntermediateSchema.safeParse(normalizarSaidaIA(bruto, materiaOverride))
       if (!validado.success) {
+        const errosFinais = validado.error.issues.slice(0, 3).map((i) => `${i.path.join('.') || '(raiz)'}: ${i.message}`)
         console.error('gerar-aula: saída ainda inválida após reparo:', validado.error.flatten())
-        responder(502, { ok: false, error: 'A IA devolveu dados em formato inesperado, mesmo após tentar corrigir. Tente novamente.' })
+        // Mostra o que exatamente ficou fora do formato — sem isso, "formato
+        // inesperado" não diz qual campo, e a investigação vira adivinhação.
+        responder(502, { ok: false, error: `A IA devolveu dados em formato inesperado, mesmo após tentar corrigir. Detalhes: ${errosFinais.join('; ')}.` })
         return
       }
     }
