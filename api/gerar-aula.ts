@@ -19,14 +19,46 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MO
 // (google-auth-library, protobufjs, ws) dentro da função serverless da
 // Vercel — não precisamos de nada disso pra uma chamada simples com chave de API.
 
-// Groq: outro provedor gratuito, não-Google, usado só como reserva quando
-// TODAS as chaves do Gemini estiverem sobrecarregadas (503) — resolve o caso
-// relatado de "o Gemini grátis está sempre sobrecarregado". openai/gpt-oss-120b
-// é o modelo de produção atual recomendado pela própria Groq como substituto
-// dos modelos Llama 3.x que ela vem descontinuando — mesmo motivo de usar um
-// alias no Gemini acima: não fixar um nome que já saiu de linha.
-const GROQ_MODEL = 'openai/gpt-oss-120b'
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions'
+// Groq e OpenRouter: outros provedores gratuitos, não-Google, usados só
+// como reserva quando TODAS as chaves do Gemini estiverem sem cota ou
+// sobrecarregadas — resolve o caso relatado de "o Gemini grátis está sempre
+// sobrecarregado/sem cota". Os dois falam o mesmo formato compatível com
+// OpenAI, então usam a mesma função de chamada (chamarOpenAiCompat) — só
+// mudam URL, modelo e o nome do campo de limite de tokens de saída.
+//
+// openai/gpt-oss-120b é o modelo de produção atual recomendado pela própria
+// Groq como substituto dos modelos Llama 3.x que ela vem descontinuando —
+// mesmo motivo de usar um alias no Gemini acima: não fixar um nome que já
+// saiu de linha.
+//
+// openrouter/free é o "Free Models Router" oficial da OpenRouter (lançado
+// fev/2026): sorteia automaticamente entre os modelos gratuitos disponíveis
+// no momento, já filtrando por quem suporta o que o pedido precisa
+// (aqui, saída estruturada) — evita fixar um modelo `:free` específico, que
+// entra e sai de linha com frequência.
+interface ProvedorOpenAiCompat {
+  id: 'groq' | 'openrouter'
+  url: string
+  model: string
+  campoMaxTokens: 'max_completion_tokens' | 'max_tokens'
+}
+
+const GROQ: ProvedorOpenAiCompat = {
+  id: 'groq',
+  url: 'https://api.groq.com/openai/v1/chat/completions',
+  model: 'openai/gpt-oss-120b',
+  campoMaxTokens: 'max_completion_tokens',
+}
+
+// A OpenRouter documenta seu próprio parâmetro normalizado como "max_tokens"
+// (ela é um proxy pra vários backends diferentes) — diferente da Groq, que é
+// diretamente compatível com a API da OpenAI e usa "max_completion_tokens".
+const OPENROUTER: ProvedorOpenAiCompat = {
+  id: 'openrouter',
+  url: 'https://openrouter.ai/api/v1/chat/completions',
+  model: 'openrouter/free',
+  campoMaxTokens: 'max_tokens',
+}
 
 // JSON Schema do formato INTERMEDIÁRIO (semântico — sem HTML, sem "ordem").
 // A IA nunca gera o HTML final; `src/lib/lessonCompiler.ts` faz isso depois,
@@ -102,14 +134,14 @@ const AULA_GERADA_JSON_SCHEMA = {
   required: ['materia', 'aulas'],
 }
 
-// A Groq (modo "json_object") não aceita um JSON Schema pra forçar o formato
-// como o Gemini aceita (responseJsonSchema) — só garante sintaxe JSON válida,
-// sem garantir a estrutura. Por isso reforçamos a estrutura esperada no
-// próprio prompt, reusando o mesmo schema já definido acima (fonte única) —
-// e a validação/reparo já existentes cobrem o resto. O modo "json_object" da
-// Groq também exige que a palavra "JSON" apareça nas mensagens, senão ela
-// recusa o pedido.
-const SUFIXO_JSON_GROQ = `\n\nResponda em JSON. Devolva SOMENTE um objeto JSON válido (sem markdown, sem texto fora do JSON), seguindo exatamente este formato:\n${JSON.stringify(AULA_GERADA_JSON_SCHEMA)}`
+// Nem Groq nem OpenRouter aceitam um JSON Schema pra forçar o formato como o
+// Gemini aceita (responseJsonSchema) no modo "json_object" — só garantem
+// sintaxe JSON válida, sem garantir a estrutura. Por isso reforçamos a
+// estrutura esperada no próprio prompt, reusando o mesmo schema já definido
+// acima (fonte única) — e a validação/reparo já existentes cobrem o resto.
+// O modo "json_object" também exige que a palavra "JSON" apareça nas
+// mensagens, senão o pedido é recusado.
+const SUFIXO_JSON_MODO_OBJETO = `\n\nResponda em JSON. Devolva SOMENTE um objeto JSON válido (sem markdown, sem texto fora do JSON), seguindo exatamente este formato:\n${JSON.stringify(AULA_GERADA_JSON_SCHEMA)}`
 
 interface GeminiPart {
   text?: string
@@ -124,14 +156,16 @@ interface GeminiResponse {
   error?: { message?: string; status?: string }
 }
 
-interface GroqResponse {
+// Formato compatível com OpenAI, compartilhado pela Groq e pela OpenRouter.
+interface OpenAiCompatResponse {
   choices?: { message?: { content?: string }; finish_reason?: string }[]
   error?: { message?: string }
 }
 
 type Tentativa =
   | { res: Response; provedor: 'gemini'; dados: GeminiResponse }
-  | { res: Response; provedor: 'groq'; dados: GroqResponse }
+  | { res: Response; provedor: 'groq'; dados: OpenAiCompatResponse }
+  | { res: Response; provedor: 'openrouter'; dados: OpenAiCompatResponse }
 
 async function chamarGemini(apiKey: string, promptTexto: string): Promise<Tentativa> {
   const corpoRequisicao = JSON.stringify({
@@ -165,41 +199,42 @@ async function chamarGemini(apiKey: string, promptTexto: string): Promise<Tentat
   return { res, dados, provedor: 'gemini' }
 }
 
-async function chamarGroq(apiKey: string, promptTexto: string): Promise<Tentativa> {
+async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, promptTexto: string): Promise<Tentativa> {
   const corpoRequisicao = JSON.stringify({
-    model: GROQ_MODEL,
+    model: cfg.model,
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT_GERAR_AULA + SUFIXO_JSON_GROQ },
+      { role: 'system', content: SYSTEM_PROMPT_GERAR_AULA + SUFIXO_JSON_MODO_OBJETO },
       { role: 'user', content: promptTexto },
     ],
     response_format: { type: 'json_object' },
-    max_completion_tokens: 24000,
+    [cfg.campoMaxTokens]: 24000,
   })
 
   const esperasEntreTentativas = [0, 3000]
   let res: Response
-  let dados: GroqResponse
+  let dados: OpenAiCompatResponse
   do {
     const espera = esperasEntreTentativas.shift()!
     if (espera) await new Promise((r) => setTimeout(r, espera))
-    res = await fetch(GROQ_URL, {
+    res = await fetch(cfg.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: corpoRequisicao,
     })
-    dados = (await res.json()) as GroqResponse
+    dados = (await res.json()) as OpenAiCompatResponse
   } while (res.status === 503 && esperasEntreTentativas.length > 0)
 
-  return { res, dados, provedor: 'groq' }
+  return { res, dados, provedor: cfg.id }
 }
 
 interface ProvedorConfig {
-  provedor: 'gemini' | 'groq'
+  provedor: 'gemini' | 'groq' | 'openrouter'
   chave: string
 }
 
 async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string): Promise<Tentativa> {
-  return cfg.provedor === 'gemini' ? chamarGemini(cfg.chave, promptTexto) : chamarGroq(cfg.chave, promptTexto)
+  if (cfg.provedor === 'gemini') return chamarGemini(cfg.chave, promptTexto)
+  return chamarOpenAiCompat(cfg.provedor === 'groq' ? GROQ : OPENROUTER, cfg.chave, promptTexto)
 }
 
 // Tenta cada provedor/chave da lista em ordem, passando pro próximo quando o
@@ -232,10 +267,10 @@ interface ResultadoExtraido {
   erroMensagem?: string
 }
 
-// Normaliza a resposta de qualquer um dos dois provedores pro mesmo formato,
-// já que Gemini e Groq têm formas de resposta bem diferentes (a Groq segue o
-// formato compatível com OpenAI: "choices[0].message.content" em vez de
-// "candidates[0].content.parts").
+// Normaliza a resposta de qualquer um dos provedores pro mesmo formato, já
+// que o Gemini tem uma forma de resposta bem diferente de Groq/OpenRouter (as
+// duas seguem o mesmo formato compatível com OpenAI: "choices[0].message.content"
+// em vez de "candidates[0].content.parts").
 function extrairResultado(t: Tentativa): ResultadoExtraido {
   if (t.provedor === 'gemini') {
     const candidato = t.dados.candidates?.[0]
@@ -270,14 +305,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Prioriza a chave própria do usuário (evita fila compartilhada), depois a
   // chave principal e a(s) reserva(s) do Gemini na plataforma e, só se todas
-  // essas estiverem sem cota ou sobrecarregadas, cai pra Groq — outro
-  // provedor gratuito, não-Google, configurável só pela plataforma
-  // (GROQ_API_KEY). Cada item é opcional: sem nenhuma configuração extra, o
+  // essas estiverem sem cota ou sobrecarregadas, cai pra Groq e depois pra
+  // OpenRouter — outros provedores gratuitos, não-Google, configuráveis só
+  // pela plataforma. Cada item é opcional: sem nenhuma configuração extra, o
   // comportamento é o mesmo de sempre (só a chave do usuário e/ou
-  // GEMINI_API_KEY). GEMINI_API_KEY_RESERVA e GROQ_API_KEY aceitam mais de
-  // uma chave, separadas por vírgula ou quebra de linha — pra adicionar mais
-  // reservas basta colar outra chave na mesma variável na Vercel, sem
-  // precisar mexer no código.
+  // GEMINI_API_KEY). GEMINI_API_KEY_RESERVA, GROQ_API_KEY e
+  // OPENROUTER_API_KEY aceitam mais de uma chave, separadas por vírgula ou
+  // quebra de linha — pra adicionar mais reservas basta colar outra chave na
+  // mesma variável na Vercel, sem precisar mexer no código.
   const dividirChaves = (valor: string | undefined) =>
     (valor ?? '')
       .split(/[,\n]/)
@@ -292,9 +327,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ]),
   )
   const chavesGroq = Array.from(new Set(dividirChaves(process.env.GROQ_API_KEY)))
+  const chavesOpenRouter = Array.from(new Set(dividirChaves(process.env.OPENROUTER_API_KEY)))
   const provedores: ProvedorConfig[] = [
     ...chavesGemini.map((chave): ProvedorConfig => ({ provedor: 'gemini', chave })),
     ...chavesGroq.map((chave): ProvedorConfig => ({ provedor: 'groq' as const, chave })),
+    ...chavesOpenRouter.map((chave): ProvedorConfig => ({ provedor: 'openrouter' as const, chave })),
   ]
   if (provedores.length === 0) {
     res.status(500).json({
@@ -341,7 +378,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 ? chaveUsuario
                   ? 'Cota gratuita da sua chave do Gemini esgotada por agora. Tente novamente em alguns minutos.'
                   : 'Cota gratuita compartilhada do Gemini esgotada por agora. Adicione sua própria chave grátis em "Perfil" pra não depender dela, ou tente de novo mais tarde.'
-                : 'Cota gratuita do provedor de reserva (Groq) esgotada por agora. Tente novamente mais tarde.',
+                : `Cota gratuita do provedor de reserva (${provedorUsado.provedor === 'groq' ? 'Groq' : 'OpenRouter'}) esgotada por agora. Tente novamente mais tarde.`,
         })
         return
       }
