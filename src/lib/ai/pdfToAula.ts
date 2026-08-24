@@ -56,21 +56,37 @@ export async function extrairTextoPdf(file: File): Promise<{ texto: string; numP
 
 // Tamanho de cada pedaço, em páginas.
 //
-// Este número já foi de 30 -> 25 -> 10 -> 6 enquanto eu perseguia um problema
-// de tempo que, no fim, era outro (a função tinha teto de 60s por engano meu,
-// quando a plataforma permite 300s). Medindo um PDF real de 73 páginas, com 6
-// páginas por pedaço cada chamada levava só ~2.500 tokens de entrada — ou
-// seja, eu estava gastando uma viagem inteira de rede, mais a latência do
-// provedor, pra processar quase nada. Doze vezes seguidas.
+// Este número já foi de 30 -> 25 -> 10 -> 6 -> 15. As duas primeiras quedas
+// perseguiam um estouro de tempo que, no fim, era outra coisa (a função
+// serverless tinha teto de 60s por engano meu, quando a plataforma permite
+// 300s), e a subida pra 15 corrigiu isso — mas trocou um problema por outro.
 //
-// Com 300s por chamada, 15 páginas (~6 mil tokens de entrada) cabem com
-// folga e reduzem o mesmo PDF de 12 etapas para 5. Menos viagens é menos
-// latência acumulada e menos chance de algo dar errado no caminho.
+// Agora o número sai de uma conta, não de tentativa e erro. Medindo o PDF
+// real de 73 páginas: 1.628 caracteres por página, ou ~407 tokens. Cada
+// chamada gasta os tokens de ENTRADA (o texto do pedaço) mais os de SAÍDA
+// reservados (4.000 nos provedores gratuitos), e é a soma que conta contra os
+// limites deles:
+//
+//   Groq (gpt-oss-120b grátis): 8.000 tokens por minuto, entrada + saída
+//   Cerebras (grátis):          janela de contexto de 8K, entrada + saída
+//
+// Com 15 páginas: ~6.100 de entrada + 4.000 de saída = ~10.100. Estoura os
+// dois. Ou seja, eu tinha silenciosamente DESLIGADO a Groq e a Cerebras da
+// fila, deixando o app dependente só da OpenRouter (que sorteia um modelo
+// diferente a cada chamada) e da Cohere. Menos etapas, mas muito mais frágil.
+//
+// Com 8 páginas: ~3.260 de entrada + 4.000 de saída = ~7.260. Cabe nos dois,
+// e os cinco provedores voltam a ser utilizáveis.
+//
+// O custo disso é uma rodada a mais (73 páginas viram 9 pedaços em vez de 5),
+// o que quase não pesa desde que as etapas passaram a rodar em paralelo: 3
+// rodadas em vez de 2. Trocar uma rodada por três provedores de reserva é um
+// negócio bom.
 //
 // Se um pedaço ainda não couber, `gerarComSubdivisao` racha aquele pedaço
 // sozinho — então errar pra cima aqui é recuperável, errar pra baixo só
 // desperdiça tempo.
-const PAGINAS_POR_PARTE = 15
+const PAGINAS_POR_PARTE = 8
 
 // Teto de segurança bem folgado, só pra nunca fazer um número absurdo de
 // chamadas sequenciais num PDF extremamente longo — não é o critério

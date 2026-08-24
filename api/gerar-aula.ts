@@ -204,7 +204,15 @@ interface GeminiResponse {
 
 // Formato compatível com OpenAI, compartilhado pela Groq e pela OpenRouter.
 interface OpenAiCompatResponse {
-  choices?: { message?: { content?: string }; finish_reason?: string }[]
+  choices?: {
+    // `content` é string na maioria dos provedores, mas o endpoint compatível
+    // da Cohere e alguns modelos sorteados pela OpenRouter devolvem a forma
+    // "lista de partes" ([{ type: 'text', text: '...' }]) que a OpenAI também
+    // aceita. Ler isso como string dava `[object Object]` e derrubava o pedido
+    // inteiro com "JSON inválido".
+    message?: { content?: string | ({ text?: string } | string)[] | null }
+    finish_reason?: string
+  }[]
   error?: { message?: string }
 }
 
@@ -524,6 +532,25 @@ const ATRASO_PARALELO_MS = 15_000
  * primeiro — nenhum provedor extra chega a ser acionado, então não há
  * desperdício de cota.
  */
+/**
+ * Uma resposta HTTP 200 nem sempre é uma resposta útil: o provedor pode ter
+ * bloqueado o conteúdo, cortado no meio pelo teto de tokens, ou escrito algo
+ * que não é JSON. Antes, qualquer 200 encerrava a corrida e o pedido inteiro
+ * morria ali. Como esses três defeitos são DAQUELE provedor/modelo (a Cohere
+ * aceita 12.000 tokens de saída onde a Groq aceita 4.000; o modelo sorteado
+ * pela OpenRouter muda a cada chamada), vale tentar o próximo — exatamente
+ * como já fazemos com 429 e 503.
+ *
+ * A tentativa continua guardada como último recurso, então se nenhum provedor
+ * entregar algo melhor, a mensagem de erro específica ainda chega ao usuário.
+ */
+function respostaAproveitavel(t: Tentativa): boolean {
+  const extraido = extrairResultado(t)
+  if (extraido.bloqueadoMotivo) return false
+  if (!extraido.texto) return false
+  return interpretarJsonDaIA(extraido.texto) !== null
+}
+
 async function chamarComReserva(
   provedores: ProvedorConfig[],
   promptTexto: string,
@@ -563,7 +590,7 @@ async function chamarComReserva(
           const rotulo = tentativa.res.status === STATUS_TEMPO_ESGOTADO ? 'tempo esgotado' : String(tentativa.res.status)
           diagnostico.push(`${NOME_PROVEDOR[cfg.provedor]} ${segundos}s (${rotulo})`)
 
-          if (STATUS_TENTA_PROXIMO.has(tentativa.res.status)) {
+          if (STATUS_TENTA_PROXIMO.has(tentativa.res.status) || !respostaAproveitavel(tentativa)) {
             // Falhou de um jeito que outro provedor pode resolver: guarda como
             // último recurso e adianta o próximo agora, sem esperar o relógio.
             ultima = { tentativa, provedorUsado: cfg }
@@ -615,10 +642,185 @@ function extrairResultado(t: Tentativa): ResultadoExtraido {
   }
   const escolha = t.dados.choices?.[0]
   return {
-    texto: escolha?.message?.content ?? '',
+    texto: textoDaMensagem(escolha?.message?.content),
     bloqueadoMotivo: escolha?.finish_reason === 'content_filter' ? 'content_filter' : undefined,
     cortado: escolha?.finish_reason === 'length',
     erroMensagem: t.dados.error?.message,
+  }
+}
+
+/** Aceita `content` como string ou como lista de partes; qualquer outra coisa vira "". */
+function textoDaMensagem(conteudo: string | ({ text?: string } | string)[] | null | undefined): string {
+  if (typeof conteudo === 'string') return conteudo
+  if (Array.isArray(conteudo)) {
+    return conteudo.map((parte) => (typeof parte === 'string' ? parte : typeof parte?.text === 'string' ? parte.text : '')).join('')
+  }
+  return ''
+}
+
+/**
+ * Fecha um JSON que foi cortado no meio e devolve o objeto resultante.
+ *
+ * Por que isso existe: os provedores gratuitos têm teto de tokens de SAÍDA
+ * (4.000 na Groq e na Cerebras). Quando a aula gerada passa disso, a resposta
+ * simplesmente para no meio de uma palavra. O certo seria o provedor avisar
+ * com finish_reason "length", e aí já temos tratamento — mas nem todos avisam,
+ * e o que sobra é um texto que o JSON.parse recusa. Até agora isso derrubava
+ * o pedido inteiro com "A IA devolveu um JSON inválido", jogando fora tudo o
+ * que a IA já tinha escrito corretamente antes do corte.
+ *
+ * O conserto: fecha as aspas e os colchetes/chaves que ficaram abertos e
+ * descarta o último item incompleto. O que sobra é uma aula legítima, só que
+ * menor — e como `normalizarSaidaIA` já descarta questões e blocos quebrados,
+ * nada meio escrito chega ao usuário. Melhor entregar 8 das 10 questões de um
+ * trecho do que perder o trecho inteiro.
+ *
+ * Nada aqui inventa conteúdo: só remove o pedaço truncado e fecha a estrutura.
+ */
+export function fecharJsonTruncado(texto: string): string | null {
+  const candidatos = [limparCauda(texto), cortarNoUltimoValorCompleto(texto)]
+  for (const candidato of candidatos) {
+    if (!candidato) continue
+    const fechado = fecharAberturas(candidato)
+    // Só devolve o que realmente vira JSON — assim nenhuma heurística daqui
+    // consegue produzir lixo, no máximo devolve null e o fluxo segue igual.
+    try {
+      JSON.parse(fechado)
+      return fechado
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+/**
+ * Pilha de `{`/`[` ainda abertos, se o texto termina dentro de uma string e,
+ * nesse caso, onde essa string começou.
+ *
+ * A posição de abertura importa: cortar na última aspa que aparece no texto
+ * parece equivalente, mas não é — uma aspa ESCAPADA dentro do próprio texto
+ * (`"ele disse \\"oi\\" e depois`) é a última do texto sem ser o início de
+ * nada, e cortar ali deixa uma barra de escape solta que o JSON.parse recusa.
+ */
+function estadoJson(texto: string): { pilha: string[]; dentroDeString: boolean; inicioString: number } {
+  const pilha: string[] = []
+  let dentroDeString = false
+  let escapando = false
+  let inicioString = -1
+  for (let i = 0; i < texto.length; i++) {
+    const c = texto[i]
+    if (dentroDeString) {
+      if (escapando) escapando = false
+      else if (c === '\\') escapando = true
+      else if (c === '"') {
+        dentroDeString = false
+        inicioString = -1
+      }
+      continue
+    }
+    if (c === '"') {
+      dentroDeString = true
+      inicioString = i
+    } else if (c === '{' || c === '[') pilha.push(c)
+    else if (c === '}' || c === ']') pilha.pop()
+  }
+  return { pilha, dentroDeString, inicioString }
+}
+
+const STRING_COMPLETA_NO_FIM = /"(?:[^"\\]|\\.)*"\s*$/
+const CHAVE_SEM_VALOR = /"(?:[^"\\]|\\.)*"\s*:\s*$/
+const CHAVE_SOLTA = /[{,]\s*"(?:[^"\\]|\\.)*"\s*$/
+
+/**
+ * Remove do fim tudo que ficou pela metade: string aberta, vírgula sobrando,
+ * `"chave":` sem valor, `"chave"` sem os dois-pontos. Repete até estabilizar,
+ * porque tirar uma coisa costuma expor a anterior.
+ *
+ * Só remove o que está incompleto: um par `"chave": "valor"` inteiro nunca é
+ * tocado, e num array um elemento completo também não — a diferença entre
+ * uma string que é chave e uma que é valor sai do que vem antes dela e de
+ * qual container está aberto.
+ */
+function limparCauda(texto: string): string {
+  let atual = texto
+  const st = estadoJson(atual)
+  if (st.dentroDeString) {
+    if (st.inicioString <= 0) return ''
+    atual = atual.slice(0, st.inicioString)
+  }
+
+  for (let guarda = 0; guarda < 200; guarda++) {
+    const anterior = atual
+    atual = atual.replace(/[\s,]+$/, '')
+    if (CHAVE_SEM_VALOR.test(atual)) {
+      atual = atual.replace(CHAVE_SEM_VALOR, '')
+    } else if (estadoJson(atual).pilha.at(-1) === '{' && CHAVE_SOLTA.test(atual) && STRING_COMPLETA_NO_FIM.test(atual)) {
+      // Dentro de um objeto, uma string logo depois de `{` ou `,` só pode ser
+      // uma chave — e ela ficou sem valor. Dentro de um array, a mesma forma
+      // seria um elemento legítimo, por isso a checagem da pilha.
+      atual = atual.replace(STRING_COMPLETA_NO_FIM, '')
+    }
+    if (atual === anterior) break
+  }
+  return atual.replace(/[\s,]+$/, '')
+}
+
+/**
+ * Plano B: corta no fim do último objeto/array aninhado que fechou
+ * corretamente. Descarta mais do que `limparCauda`, mas resolve casos em que
+ * o texto quebrou de um jeito que a limpeza de cauda não dá conta.
+ */
+function cortarNoUltimoValorCompleto(texto: string): string {
+  const pilha: string[] = []
+  let dentroDeString = false
+  let escapando = false
+  let corte = -1
+  for (let i = 0; i < texto.length; i++) {
+    const c = texto[i]
+    if (dentroDeString) {
+      if (escapando) escapando = false
+      else if (c === '\\') escapando = true
+      else if (c === '"') dentroDeString = false
+      continue
+    }
+    if (c === '"') dentroDeString = true
+    else if (c === '{' || c === '[') pilha.push(c)
+    else if (c === '}' || c === ']') {
+      pilha.pop()
+      if (pilha.length > 0) corte = i
+    }
+  }
+  return corte >= 0 ? texto.slice(0, corte + 1) : ''
+}
+
+/** Fecha, na ordem certa, os `{`/`[` que ficaram abertos. */
+function fecharAberturas(texto: string): string {
+  const { pilha } = estadoJson(texto)
+  let saida = texto
+  for (let i = pilha.length - 1; i >= 0; i--) saida += pilha[i] === '{' ? '}' : ']'
+  return saida
+}
+
+/**
+ * Lê o JSON da IA, tolerando os dois defeitos comuns: cerca de markdown em
+ * volta e resposta cortada no meio pelo teto de tokens do provedor.
+ * Devolve `null` quando nem assim dá pra aproveitar.
+ */
+function interpretarJsonDaIA(texto: string): unknown {
+  const limpo = extrairJson(texto)
+  try {
+    return JSON.parse(limpo)
+  } catch {
+    const fechado = fecharJsonTruncado(limpo)
+    if (!fechado) return null
+    try {
+      const salvo = JSON.parse(fechado)
+      console.warn('gerar-aula: resposta veio cortada; recuperada fechando o JSON truncado.')
+      return salvo
+    } catch {
+      return null
+    }
   }
 }
 
@@ -667,20 +869,82 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-async function processarPedido(req: VercelRequest, responder: Responder) {
-  const inicio = Date.now()
-  if (req.method !== 'POST') {
-    responder(405, { ok: false, error: 'Método não permitido.' })
-    return
+/**
+ * Teste de saúde dos provedores, acionado por GET /api/gerar-aula?diagnostico=1.
+ *
+ * Existe porque "está tudo configurado?" era impossível de responder sem
+ * mandar um PDF inteiro e torcer: as chaves ficam nas variáveis de ambiente da
+ * Vercel, invisíveis pra quem está de fora, e um erro de digitação numa chave
+ * só aparecia como um pedido lento que falhava no fim.
+ *
+ * Manda o menor pedido possível pra cada provedor configurado — o suficiente
+ * pra provar que a chave é aceita e o modelo existe, que são justamente as
+ * duas coisas que quebram. Não mede qualidade nem capacidade de gerar uma aula
+ * inteira; é um "responde ou não responde", e por isso é barato (uns poucos
+ * tokens por provedor) e rápido.
+ */
+async function pingProvedor(cfg: ProvedorConfig, inicio: number): Promise<Record<string, unknown>> {
+  const antes = Date.now()
+  const nome = NOME_PROVEDOR[cfg.provedor]
+  try {
+    let res: Response
+    let erro: string | undefined
+    let modelo: string
+    if (cfg.provedor === 'gemini') {
+      modelo = MODEL
+      const r = await postJsonComTeto<GeminiResponse>(
+        GEMINI_URL,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.chave },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: 'ok' }] }],
+            generationConfig: { maxOutputTokens: 1, ...configThinking(varianteThinkingConhecida ?? 'nenhuma') },
+          }),
+        },
+        inicio,
+      )
+      res = r.res
+      erro = r.dados.error?.message
+    } else {
+      const compat =
+        cfg.provedor === 'groq' ? GROQ : cfg.provedor === 'cerebras' ? CEREBRAS : cfg.provedor === 'cohere' ? COHERE : OPENROUTER
+      modelo = compat.model
+      const r = await postJsonComTeto<OpenAiCompatResponse>(
+        compat.url,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.chave}` },
+          body: JSON.stringify({ model: compat.model, messages: [{ role: 'user', content: 'ok' }], [compat.campoMaxTokens]: 1 }),
+        },
+        inicio,
+      )
+      res = r.res
+      erro = r.dados.error?.message
+    }
+    return {
+      provedor: nome,
+      modelo,
+      ok: res.ok,
+      status: res.status,
+      ms: Date.now() - antes,
+      // 400 aqui costuma ser o teto de 1 token, não problema de chave; o que
+      // importa distinguir é 401/403 (chave), 404 (modelo) e 429 (cota).
+      detalhe: res.ok ? undefined : erro?.slice(0, 200),
+    }
+  } catch (err) {
+    return {
+      provedor: nome,
+      ok: false,
+      status: 'falha de rede',
+      ms: Date.now() - antes,
+      detalhe: err instanceof Error ? err.message.slice(0, 200) : String(err),
+    }
   }
+}
 
-  const { texto, materiaOverride, nomeArquivo, chaveUsuario } = (req.body ?? {}) as {
-    texto?: string
-    materiaOverride?: string
-    nomeArquivo?: string
-    chaveUsuario?: string
-  }
-
+/** Monta a lista de provedores na ordem de largada, a partir das variáveis de ambiente e da chave do usuário. */
+function montarProvedores(chaveUsuario: string | undefined): ProvedorConfig[] {
   // Ordem de prioridade da cascata. Vale lembrar que hoje ela é uma ordem de
   // LARGADA, não uma fila: quem não responde rápido ganha companhia em
   // paralelo, e o primeiro a entregar vence (ver `chamarComReserva`).
@@ -731,6 +995,44 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
     vistos.add(chaveUnica)
     return true
   })
+  return provedores
+}
+
+async function processarPedido(req: VercelRequest, responder: Responder) {
+  const inicio = Date.now()
+
+  // GET /api/gerar-aula?diagnostico=1 — checagem de saúde dos provedores.
+  // Não recebe nem devolve conteúdo de PDF, e nunca expõe as chaves: só diz
+  // quantas estão configuradas em cada provedor e se cada uma responde.
+  if (req.method === 'GET' && req.query?.diagnostico) {
+    const provedores = montarProvedores(typeof req.query.chaveUsuario === 'string' ? req.query.chaveUsuario : undefined)
+    if (!provedores.length) {
+      responder(200, { ok: false, error: 'Nenhum provedor configurado.', provedores: [] })
+      return
+    }
+    const resultados = await Promise.all(provedores.map((cfg) => pingProvedor(cfg, inicio)))
+    responder(200, {
+      ok: resultados.some((r) => r.ok),
+      configurados: resultados.length,
+      funcionando: resultados.filter((r) => r.ok).length,
+      provedores: resultados,
+    })
+    return
+  }
+
+  if (req.method !== 'POST') {
+    responder(405, { ok: false, error: 'Método não permitido.' })
+    return
+  }
+
+  const { texto, materiaOverride, nomeArquivo, chaveUsuario } = (req.body ?? {}) as {
+    texto?: string
+    materiaOverride?: string
+    nomeArquivo?: string
+    chaveUsuario?: string
+  }
+
+  const provedores = montarProvedores(chaveUsuario)
   if (provedores.length === 0) {
     responder(500, {
       ok: false,
@@ -827,26 +1129,30 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
       responder(502, { ok: false, error: `A IA bloqueou o conteúdo (motivo: ${extraido.bloqueadoMotivo}).` })
       return
     }
-    if (extraido.cortado) {
-      responder(502, {
-        ok: false,
-        error: 'A aula gerada ficou grande demais e foi cortada. Tente dividir o PDF em partes menores.',
-        tamanhoExcessivo: true,
-      })
-      return
-    }
-
     let textoResposta = extraido.texto
     if (!textoResposta) {
       responder(502, { ok: false, error: 'A IA não devolveu nenhum conteúdo. Tente novamente.' })
       return
     }
 
-    let bruto: unknown
-    try {
-      bruto = JSON.parse(extrairJson(textoResposta))
-    } catch {
-      responder(502, { ok: false, error: 'A IA devolveu um JSON inválido. Tente novamente.' })
+    // A resposta cortada NÃO é mais descartada de saída: `interpretarJsonDaIA`
+    // fecha o JSON truncado e aproveita a parte que a IA chegou a escrever.
+    // Só quando nem isso funciona é que o pedido falha — e aí a mensagem
+    // separa os dois casos, porque a saída pro usuário é diferente (cortada
+    // = dividir o PDF; ilegível = tentar de novo).
+    if (extraido.cortado) console.warn('gerar-aula: resposta cortada pelo teto de tokens do provedor', provedorUsado.provedor)
+
+    const bruto = interpretarJsonDaIA(textoResposta)
+    if (bruto === null) {
+      // Chegar aqui significa que TODOS os provedores devolveram algo
+      // ilegível (o racer já troca de provedor quando isso acontece).
+      responder(502, {
+        ok: false,
+        error: extraido.cortado
+          ? `A aula gerada ficou grande demais e foi cortada, e não deu pra aproveitar o que veio. Divida o PDF em partes menores. Tentativas: ${diagnostico.join(' · ')}.`
+          : `A IA devolveu uma resposta que não dá pra ler como JSON. Tentativas: ${diagnostico.join(' · ')}.`,
+        tamanhoExcessivo: true,
+      })
       return
     }
 
@@ -889,13 +1195,12 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
         return
       }
       textoResposta = extrairResultado(reparo).texto
-      try {
-        bruto = JSON.parse(extrairJson(textoResposta))
-      } catch {
+      const reparado = interpretarJsonDaIA(textoResposta)
+      if (reparado === null) {
         responder(502, { ok: false, error: 'A IA devolveu um JSON inválido mesmo após a correção. Tente novamente.' })
         return
       }
-      validado = AulaGeradaIntermediateSchema.safeParse(normalizarSaidaIA(bruto, materiaOverride))
+      validado = AulaGeradaIntermediateSchema.safeParse(normalizarSaidaIA(reparado, materiaOverride))
       if (!validado.success) {
         const errosFinais = validado.error.issues.slice(0, 3).map((i) => `${i.path.join('.') || '(raiz)'}: ${i.message}`)
         console.error('gerar-aula: saída ainda inválida após reparo:', validado.error.flatten())
