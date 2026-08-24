@@ -15,6 +15,7 @@ import Geracoes from './pages/Geracoes'
 import Inicio from './pages/Inicio'
 import Login from './pages/Login'
 import MateriaDetail from './pages/MateriaDetail'
+import NovaSenha from './pages/NovaSenha'
 import Perfil from './pages/Perfil'
 import Premium from './pages/Premium'
 import Questoes from './pages/Questoes'
@@ -39,6 +40,11 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Fora do RequireAuth: quem chega pelo link do e-mail está tecnicamente
+          logado (a sessão vem no endereço), mas precisa cair AQUI e não na
+          tela inicial — e quem chega com link vencido não está logado e
+          também precisa ver a explicação. */}
+      <Route path="/nova-senha" element={<NovaSenha />} />
       <Route
         element={
           <RequireAuth>

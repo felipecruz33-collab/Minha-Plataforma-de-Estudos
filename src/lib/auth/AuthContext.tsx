@@ -3,6 +3,7 @@ import { repo } from '../repo'
 import { isSupabaseConfigured, supabase } from '../supabaseClient'
 import type { Perfil } from '../types'
 import * as localAuth from './localAuth'
+import { AVISAR_EMAIL_NAO_CADASTRADO, urlDeRetornoNovaSenha, type ResultadoEnvio } from './recuperacaoSenha'
 
 interface AuthContextValue {
   loading: boolean
@@ -16,6 +17,10 @@ interface AuthContextValue {
   atualizarNome: (nome: string) => Promise<void>
   salvarChaveGemini: (chave: string | null) => Promise<void>
   alterarSenha: (senhaAtual: string, novaSenha: string) => Promise<void>
+  /** Manda o e-mail com o link pra criar uma senha nova. */
+  enviarLinkDeSenha: (email: string) => Promise<ResultadoEnvio>
+  /** Grava a senha nova depois que a pessoa chegou pelo link do e-mail. */
+  definirNovaSenha: (novaSenha: string) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -187,9 +192,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user],
   )
 
+  const enviarLinkDeSenha = useCallback(async (email: string): Promise<ResultadoEnvio> => {
+    const alvo = email.trim()
+    if (!alvo) return { tipo: 'erro', mensagem: 'Digite o seu e-mail.' }
+
+    if (!isSupabaseConfigured || !supabase) {
+      // Sem backend não há de onde mandar e-mail. Dizer "enviamos" aqui seria
+      // mentira, e a pessoa ficaria esperando.
+      return { tipo: 'indisponivel' }
+    }
+
+    if (AVISAR_EMAIL_NAO_CADASTRADO) {
+      const { data, error } = await supabase.rpc('email_cadastrado', { email_consultado: alvo })
+      // Se a consulta falhar (migração 0013 ainda não aplicada, por exemplo),
+      // seguimos com o envio em vez de travar: pior é impedir quem realmente
+      // precisa recuperar a conta.
+      if (!error && data === false) return { tipo: 'nao-cadastrado' }
+    }
+
+    const { error } = await supabase.auth.resetPasswordForEmail(alvo, { redirectTo: urlDeRetornoNovaSenha() })
+    if (error) return { tipo: 'erro', mensagem: error.message }
+    return { tipo: 'enviado' }
+  }, [])
+
+  const definirNovaSenha = useCallback(async (novaSenha: string) => {
+    if (!isSupabaseConfigured || !supabase) throw new Error('Recuperação por e-mail indisponível neste ambiente.')
+    // A sessão vem do próprio link do e-mail: o cliente do Supabase lê o
+    // endereço ao carregar a página e entra com ela.
+    const { error } = await supabase.auth.updateUser({ password: novaSenha })
+    if (error) throw error
+  }, [])
+
   const value = useMemo(
-    () => ({ loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome, salvarChaveGemini, alterarSenha }),
-    [loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome, salvarChaveGemini, alterarSenha],
+    () => ({ loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome, salvarChaveGemini, alterarSenha, enviarLinkDeSenha, definirNovaSenha }),
+    [loading, user, perfil, signUp, signIn, signOut, refreshPerfil, toggleFavorito, atualizarNome, salvarChaveGemini, alterarSenha, enviarLinkDeSenha, definirNovaSenha],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
