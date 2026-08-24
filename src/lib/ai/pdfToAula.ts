@@ -32,12 +32,14 @@ export async function extrairTextoPdf(file: File): Promise<{ texto: string; numP
 // trecho grande simplesmente não termina dentro do minuto que a função
 // serverless tem por pedido.
 //
-// Por isso os pedaços são pequenos (~10 páginas). Isso deixou de ter custo
+// Por isso os pedaços são pequenos (~6 páginas). Pedaço menor também faz a
+// Groq caber no limite de 8000 tokens/minuto do plano grátis dela — e ela é
+// de longe a mais rápida das três. Isso deixou de ter custo
 // pro usuário quando passamos a costurar tudo numa aula só no final
 // (`mesclarAulasDoMesmoPdf`): mais pedaços não viram mais aulas soltas na
 // biblioteca, viram só mais chamadas por baixo dos panos. E se ainda assim
 // um pedaço não couber, `gerarComSubdivisao` racha aquele pedaço sozinho.
-const PAGINAS_POR_PARTE = 10
+const PAGINAS_POR_PARTE = 6
 
 // Teto de segurança bem folgado, só pra nunca fazer um número absurdo de
 // chamadas sequenciais num PDF extremamente longo — não é o critério
