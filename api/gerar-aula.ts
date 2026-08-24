@@ -238,12 +238,17 @@ async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string): Promise
 }
 
 // Tenta cada provedor/chave da lista em ordem, passando pro próximo quando o
-// anterior devolveu 503 (alta demanda) ou 429 (cota esgotada) — os dois são
-// por chave/conta, então trocar de chave/provedor pode resolver os dois
-// (diferente de um erro 400, por exemplo, que se repetiria em qualquer
-// chave). Devolve também com qual configuração deu certo, pra reusá-la no
-// eventual reparo em vez de recomeçar a fila do zero.
-const STATUS_TENTA_PROXIMO = new Set([429, 503])
+// anterior devolveu 503 (alta demanda), 429 (cota esgotada) ou 413 (pedido
+// grande demais pro limite de tokens por minuto daquele provedor/modelo) —
+// os três são específicos daquele provedor/chave/modelo, então trocar pode
+// resolver os três (diferente de um erro 400, por exemplo, que se repetiria
+// em qualquer chave). O 413 é comum em provedores com tier grátis: a Groq,
+// por exemplo, limita openai/gpt-oss-120b a só 8000 tokens/minuto no
+// on_demand — bem menos do que um PDF de estudo típico precisa, então cai
+// pro próximo provedor da fila em vez de travar aqui. Devolve também com
+// qual configuração deu certo, pra reusá-la no eventual reparo em vez de
+// recomeçar a fila do zero.
+const STATUS_TENTA_PROXIMO = new Set([413, 429, 503])
 
 async function chamarComReserva(
   provedores: ProvedorConfig[],
@@ -391,6 +396,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               : chaveUsuario
                 ? 'O modelo de IA está com alta demanda no Google agora (já tentei de novo automaticamente). Espera um pouco e tenta de novo.'
                 : 'O modelo de IA está com alta demanda no Google agora, mesmo já tentando de novo automaticamente. Adicionar sua própria chave grátis em "Perfil" costuma resolver, já que ela não compete com a de outros usuários.',
+        })
+        return
+      }
+      if (iaRes.status === 413) {
+        res.status(413).json({
+          ok: false,
+          error:
+            'Este PDF é grande demais para os provedores de reserva gratuitos configurados (eles têm um limite de tokens por minuto bem menor que o Gemini). Tente dividir o PDF em partes menores, ou tente de novo — se a chave principal do Gemini estiver disponível, ela costuma dar conta de PDFs maiores.',
         })
         return
       }
