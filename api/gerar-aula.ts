@@ -97,13 +97,18 @@ export const CEREBRAS: ProvedorOpenAiCompat = {
 // segundo os termos deles, NÃO pode ser usada comercialmente — o que importa
 // pro plano de publicar na Play Store. Serve bem pra testar e pra uso
 // pessoal; virando produto, precisa de chave de produção.
-const COHERE: ProvedorOpenAiCompat = {
+export const COHERE: ProvedorOpenAiCompat = {
   id: 'cohere',
   url: 'https://api.cohere.ai/compatibility/v1/chat/completions',
   model: process.env.COHERE_MODEL?.trim() || 'command-a-03-2025',
   campoMaxTokens: 'max_tokens',
   aceitaJsonSchema: false,
-  maxTokensSaida: 12000,
+  // 8192 é o teto que a própria Cohere informou em produção ("max tokens must
+  // be less than or equal to 8192 ... received 12000"). Deixar 12000 aqui
+  // custava uma viagem de rede inteira só pra ser recusado. O aprendizado em
+  // tempo de execução (`tetoDeSaidaNoErro`) continua valendo pra quem trocar
+  // de modelo e encontrar outro limite.
+  maxTokensSaida: 8000,
 }
 
 // JSON Schema do formato INTERMEDIÁRIO (semântico — sem HTML, sem "ordem").
@@ -223,12 +228,19 @@ interface OpenAiCompatResponse {
   error?: { message?: string }
 }
 
-type Tentativa =
+type Tentativa = (
   | { res: Response; provedor: 'gemini'; dados: GeminiResponse }
   | { res: Response; provedor: 'groq'; dados: OpenAiCompatResponse }
   | { res: Response; provedor: 'openrouter'; dados: OpenAiCompatResponse }
   | { res: Response; provedor: 'cerebras'; dados: OpenAiCompatResponse }
   | { res: Response; provedor: 'cohere'; dados: OpenAiCompatResponse }
+) & {
+  // Observação curta sobre o que aconteceu por dentro (ex.: qual catálogo o
+  // provedor devolveu no 404). Vai junto no diagnóstico que aparece na tela —
+  // sem isso, essa informação só existia no log do servidor, que o usuário
+  // não vê, e a investigação continuava sendo adivinhação.
+  nota?: string
+}
 
 // Teto de execução da função na Vercel, definido em vercel.json.
 //
@@ -439,18 +451,7 @@ async function chamarGemini(apiKey: string, promptTexto: string, inicio: number)
  */
 const modeloDescoberto = new Map<string, string>()
 
-async function descobrirModelo(
-  cfg: ProvedorOpenAiCompat,
-  apiKey: string,
-  inicio: number,
-  // Modelo que acabou de dar 404. Se for justamente o que está no cache, o
-  // cache está velho (o provedor aposentou também esse) — reconsultar é o
-  // certo, senão a instância ficaria repetindo um nome morto até esfriar.
-  modeloQueFalhou: string,
-): Promise<string | null> {
-  const jaSabido = modeloDescoberto.get(cfg.id)
-  if (jaSabido && jaSabido !== modeloQueFalhou) return jaSabido
-  if (jaSabido === modeloQueFalhou) modeloDescoberto.delete(cfg.id)
+async function listarModelos(cfg: ProvedorOpenAiCompat, apiKey: string, inicio: number): Promise<string[] | null> {
   try {
     const urlModelos = cfg.url.replace(/\/chat\/completions$/, '/models')
     const { res, dados } = await postJsonComTeto<{ data?: { id?: string }[] }>(
@@ -460,18 +461,47 @@ async function descobrirModelo(
     )
     if (!res.ok) return null
     const ids = (dados.data ?? []).map((m) => m.id).filter((id): id is string => !!id)
-    if (!ids.length) return null
-    console.warn(`gerar-aula: modelo de ${cfg.id} não existe mais; catálogo atual: ${ids.slice(0, 10).join(', ')}`)
-    modeloDescoberto.set(cfg.id, ids[0])
-    return ids[0]
+    console.warn(`gerar-aula: catálogo atual de ${cfg.id}: ${ids.slice(0, 10).join(', ')}`)
+    return ids
   } catch {
     return null
   }
 }
 
+/**
+ * Lê, da mensagem de erro do provedor, qual é o teto de tokens de saída dele.
+ *
+ * Cada provedor tem um teto diferente e nenhum deles publica isso de um jeito
+ * que dê pra consultar: a Cohere respondeu "max tokens must be less than or
+ * equal to 8192 ... received 12000" pra um pedido que eu tinha configurado
+ * com 12000. Chumbar 8192 no código conserta essa, e quebra na próxima vez que
+ * alguém trocar de modelo.
+ *
+ * Então a gente lê o número da própria reclamação e repete com ele. O provedor
+ * é quem sabe o próprio limite; o código só obedece.
+ */
+function tetoDeSaidaNoErro(mensagem: string | undefined): number | null {
+  if (!mensagem) return null
+  const texto = mensagem.toLowerCase()
+  if (!texto.includes('token')) return null
+  // Formas vistas: "less than or equal to 8192", "maximum ... is 4096",
+  // "max_tokens must be <= 8192".
+  const m = texto.match(/(?:less than or equal to|at most|maximum(?:\s+\w+){0,3}\s+is|<=)\s*([0-9]{2,7})/)
+  if (!m) return null
+  const limite = Number(m[1])
+  return Number.isFinite(limite) && limite > 0 ? limite : null
+}
+
+/** Teto de saída aprendido em tempo de execução, por provedor. */
+const tetoAprendido = new Map<string, number>()
+
 // Exportada só pra permitir teste do fluxo de tentativas sem subir a função.
 export async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, promptTexto: string, inicio: number): Promise<Tentativa> {
-  const montarCorpo = (comResponseFormat: boolean, modelo = modeloDescoberto.get(cfg.id) ?? cfg.model) =>
+  const montarCorpo = (
+    comResponseFormat: boolean,
+    modelo = modeloDescoberto.get(cfg.id) ?? cfg.model,
+    maxSaida = Math.min(cfg.maxTokensSaida, tetoAprendido.get(cfg.id) ?? cfg.maxTokensSaida),
+  ) =>
     JSON.stringify({
     model: modelo,
     messages: [
@@ -485,7 +515,7 @@ export async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: stri
             : { type: 'json_object' },
         }
       : {}),
-    [cfg.campoMaxTokens]: cfg.maxTokensSaida,
+    [cfg.campoMaxTokens]: maxSaida,
     // Mesmo problema do "pensamento" do Gemini: os modelos gpt-oss da Groq
     // são modelos de raciocínio e vêm com reasoning_effort "medium" por
     // padrão, o que gasta tempo antes de escrever a resposta. Aqui a tarefa
@@ -527,6 +557,23 @@ export async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: stri
     // é uma degradação de verdade -- o modelo continua instruído a devolver
     // JSON pelo texto do prompt -- e é melhor do que perder o provedor inteiro.
     if (resultado.res.status === 400) {
+      // Primeiro o teto de tokens: é o mais específico, o provedor diz o
+      // número certo na própria mensagem, e repetir com ele quase sempre
+      // resolve sem precisar abrir mão do modo JSON.
+      const teto = tetoDeSaidaNoErro(resultado.dados.error?.message ?? resultado.dados.message ?? resultado.dados.detail)
+      if (teto && teto < cfg.maxTokensSaida) {
+        tetoAprendido.set(cfg.id, teto)
+        const comTetoCerto = await enviar(montarCorpo(true, undefined, teto))
+        if (comTetoCerto && comTetoCerto.res.ok) {
+          console.warn(`gerar-aula: ${cfg.id} aceita no máximo ${teto} tokens de saída; repetido com esse teto.`)
+          resultado = comTetoCerto
+        } else if (comTetoCerto) {
+          resultado = comTetoCerto
+        }
+      }
+    }
+
+    if (resultado.res.status === 400) {
       const semFormato = await enviar(montarCorpo(false))
       if (semFormato && semFormato.res.ok) {
         console.warn(`gerar-aula: ${cfg.id} recusou response_format (400); repetido sem ele e funcionou.`)
@@ -537,22 +584,35 @@ export async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: stri
     // 404 = o modelo configurado saiu do catálogo. Pergunta ao provedor qual
     // ele tem hoje e repete uma vez com esse. Se também não der, o 404
     // original segue pra cascata, que passa pro próximo provedor.
+    let nota: string | undefined
     if (resultado.res.status === 404) {
       const modeloUsado = modeloDescoberto.get(cfg.id) ?? cfg.model
-      const modelo = await descobrirModelo(cfg, apiKey, inicio, modeloUsado)
-      if (modelo) {
-        const comOutroModelo = await enviar(montarCorpo(true, modelo))
-        if (comOutroModelo && comOutroModelo.res.ok) {
-          console.warn(`gerar-aula: ${cfg.id} passou a usar o modelo "${modelo}".`)
-          resultado = comOutroModelo
-        } else {
-          // Guardado só se realmente funcionou; senão a próxima chamada não
-          // deve herdar um modelo que também falha.
-          modeloDescoberto.delete(cfg.id)
+      const catalogo = await listarModelos(cfg, apiKey, inicio)
+      if (!catalogo) {
+        nota = `modelo "${modeloUsado}" não existe e o catálogo não pôde ser consultado`
+      } else if (!catalogo.length) {
+        nota = `modelo "${modeloUsado}" não existe e o catálogo veio vazio`
+      } else {
+        // Tenta mais de um: o primeiro da lista pode ser um modelo que a conta
+        // não tem permissão de usar, e desistir nele desperdiçaria o provedor
+        // inteiro por causa da ordem em que ele lista as coisas.
+        const candidatos = catalogo.filter((m) => m !== modeloUsado).slice(0, 3)
+        modeloDescoberto.delete(cfg.id)
+        for (const modelo of candidatos) {
+          const tentativa = await enviar(montarCorpo(true, modelo))
+          if (!tentativa) break
+          if (tentativa.res.ok) {
+            console.warn(`gerar-aula: ${cfg.id} passou a usar o modelo "${modelo}".`)
+            modeloDescoberto.set(cfg.id, modelo)
+            resultado = tentativa
+            break
+          }
+          resultado = tentativa
         }
+        if (!resultado.res.ok) nota = `nenhum modelo servia; catálogo: ${catalogo.slice(0, 6).join(', ')}`
       }
     }
-    return { res: resultado.res, dados: resultado.dados, provedor: cfg.id }
+    return { res: resultado.res, dados: resultado.dados, provedor: cfg.id, nota }
   } catch (err) {
     console.error(`gerar-aula: chamada à ${cfg.id} abortada/falhou:`, err instanceof Error ? err.message : err)
     return tentativaTempoEsgotado(cfg.id)
@@ -704,7 +764,7 @@ async function chamarComReserva(
         .then((tentativa) => {
           const segundos = ((Date.now() - antes) / 1000).toFixed(1)
           const rotulo = tentativa.res.status === STATUS_TEMPO_ESGOTADO ? 'tempo esgotado' : String(tentativa.res.status)
-          diagnostico.push(`${NOME_PROVEDOR[cfg.provedor]} ${segundos}s (${rotulo})`)
+          diagnostico.push(`${NOME_PROVEDOR[cfg.provedor]} ${segundos}s (${rotulo})${tentativa.nota ? ` — ${tentativa.nota}` : ''}`)
           statusVistos.add(tentativa.res.status)
 
           if (STATUS_TENTA_PROXIMO.has(tentativa.res.status) || !respostaAproveitavel(tentativa)) {
