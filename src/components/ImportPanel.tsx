@@ -1,10 +1,11 @@
-import { AlertTriangle, CheckCircle2, FileJson, FileUp, KeyRound } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, FileJson, FileUp, KeyRound, Scissors } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth/AuthContext'
 import { repo } from '../lib/repo'
 import { validateAulaImport } from '../lib/schema'
 import { MateriaPicker, resolverNomeMateria, type EscolhaMateria } from './MateriaPicker'
+import { Button } from './ui/Button'
 import { Tabs } from './ui/Tabs'
 
 interface ImportPanelProps {
@@ -20,6 +21,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   const [etapa, setEtapa] = useState<string | null>(null)
   const [errors, setErrors] = useState<string[]>([])
   const [sucesso, setSucesso] = useState<string | null>(null)
+  const [pdfMuitoGrande, setPdfMuitoGrande] = useState<{ texto: string; nomeArquivo: string } | null>(null)
 
   if (!user) return null
 
@@ -69,6 +71,42 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
     onImported?.()
   }
 
+  /** Valida e salva uma lista de aulas geradas via IA (PDF normal ou dividido em partes) — registra cada uma em "Gerações IA". */
+  async function salvarPayloadsGerados(payloads: unknown[], nomeArquivo: string, nomeEscolhido: string | null | undefined) {
+    setEtapa(payloads.length > 1 ? `Salvando ${payloads.length} aulas…` : 'Salvando aula…')
+    const titulosSalvos: string[] = []
+    const errosAcumulados: string[] = []
+    let materiaFinal = ''
+    for (const payload of payloads) {
+      const r = await validarEImportarUma(payload, nomeEscolhido)
+      if (r.ok) {
+        titulosSalvos.push(r.tituloAula)
+        materiaFinal = r.materiaFinal
+        await repo.addGeracao({ userId: user!.id, nomeArquivo, materia: r.materiaFinal, aulaTitulo: r.tituloAula, status: 'concluido' })
+      } else {
+        errosAcumulados.push(...r.errors)
+        await repo.addGeracao({
+          userId: user!.id,
+          nomeArquivo,
+          materia: nomeEscolhido || '(detecção automática)',
+          aulaTitulo: '—',
+          status: 'erro',
+          mensagem: r.errors.slice(0, 3).join('; '),
+        })
+      }
+    }
+
+    setErrors(errosAcumulados)
+    if (titulosSalvos.length > 0) {
+      setSucesso(
+        titulosSalvos.length === 1
+          ? `Aula "${titulosSalvos[0]}" salva em "${materiaFinal}".`
+          : `${titulosSalvos.length} aulas salvas em "${materiaFinal}": ${titulosSalvos.join(', ')}.`,
+      )
+      onImported?.()
+    }
+  }
+
   async function onJsonFile(file: File) {
     if (escolhaMateria.modo === 'nova' && !escolhaMateria.nome?.trim()) {
       setErrors(['Digite um nome para a nova matéria, ou escolha outra opção de destino.'])
@@ -77,6 +115,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
     setBusy(true)
     setErrors([])
     setSucesso(null)
+    setPdfMuitoGrande(null)
     try {
       const text = await file.text()
       let parsed: unknown
@@ -102,51 +141,55 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
     setBusy(true)
     setErrors([])
     setSucesso(null)
+    setPdfMuitoGrande(null)
     const nomeEscolhido = resolverNomeMateria(escolhaMateria)
     try {
       setEtapa('Lendo o PDF…')
       const { gerarAulaViaIA } = await import('../lib/ai/pdfToAula')
       setEtapa('Gerando a aula com IA (pode levar até 1 minuto)…')
       const payloads = await gerarAulaViaIA(file, nomeEscolhido, perfil?.chaveGemini)
-
-      setEtapa(payloads.length > 1 ? `Salvando ${payloads.length} aulas…` : 'Salvando aula…')
-      const titulosSalvos: string[] = []
-      const errosAcumulados: string[] = []
-      let materiaFinal = ''
-      for (const payload of payloads) {
-        const r = await validarEImportarUma(payload, nomeEscolhido)
-        if (r.ok) {
-          titulosSalvos.push(r.tituloAula)
-          materiaFinal = r.materiaFinal
-          await repo.addGeracao({ userId: user!.id, nomeArquivo: file.name, materia: r.materiaFinal, aulaTitulo: r.tituloAula, status: 'concluido' })
-        } else {
-          errosAcumulados.push(...r.errors)
-          await repo.addGeracao({
-            userId: user!.id,
-            nomeArquivo: file.name,
-            materia: nomeEscolhido || '(detecção automática)',
-            aulaTitulo: '—',
-            status: 'erro',
-            mensagem: r.errors.slice(0, 3).join('; '),
-          })
-        }
-      }
-
-      setErrors(errosAcumulados)
-      if (titulosSalvos.length > 0) {
-        setSucesso(
-          titulosSalvos.length === 1
-            ? `Aula "${titulosSalvos[0]}" salva em "${materiaFinal}".`
-            : `${titulosSalvos.length} aulas salvas em "${materiaFinal}": ${titulosSalvos.join(', ')}.`,
-        )
-        onImported?.()
-      }
+      await salvarPayloadsGerados(payloads, file.name, nomeEscolhido)
     } catch (e) {
+      const { PdfMuitoGrandeError } = await import('../lib/ai/pdfToAula')
       const mensagem = e instanceof Error ? e.message : 'Erro inesperado ao gerar a aula a partir do PDF.'
       setErrors([mensagem])
+      if (e instanceof PdfMuitoGrandeError) {
+        setPdfMuitoGrande({ texto: e.textoCompleto, nomeArquivo: file.name })
+      }
       await repo.addGeracao({
         userId: user!.id,
         nomeArquivo: file.name,
+        materia: nomeEscolhido || '(detecção automática)',
+        aulaTitulo: '—',
+        status: 'erro',
+        mensagem,
+      })
+    } finally {
+      setBusy(false)
+      setEtapa(null)
+    }
+  }
+
+  async function onDividirPdf() {
+    if (!pdfMuitoGrande) return
+    setBusy(true)
+    setErrors([])
+    setSucesso(null)
+    const alvo = pdfMuitoGrande
+    setPdfMuitoGrande(null)
+    const nomeEscolhido = resolverNomeMateria(escolhaMateria)
+    try {
+      const { gerarAulaViaIADividida } = await import('../lib/ai/pdfToAula')
+      const payloads = await gerarAulaViaIADividida(alvo.texto, nomeEscolhido ?? undefined, alvo.nomeArquivo, perfil?.chaveGemini, (parte) =>
+        setEtapa(`Gerando parte ${parte} de 2 (pode levar até 1 minuto cada)…`),
+      )
+      await salvarPayloadsGerados(payloads, alvo.nomeArquivo, nomeEscolhido)
+    } catch (e) {
+      const mensagem = e instanceof Error ? e.message : 'Erro inesperado ao gerar a aula a partir do PDF dividido.'
+      setErrors([mensagem])
+      await repo.addGeracao({
+        userId: user!.id,
+        nomeArquivo: alvo.nomeArquivo,
         materia: nomeEscolhido || '(detecção automática)',
         aulaTitulo: '—',
         status: 'erro',
@@ -170,6 +213,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
           setAba(k as 'pdf' | 'json')
           setErrors([])
           setSucesso(null)
+          setPdfMuitoGrande(null)
         }}
       />
       <div className="space-y-4 p-4">
@@ -252,6 +296,16 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                 <li key={i}>{err}</li>
               ))}
             </ul>
+          </div>
+        )}
+
+        {pdfMuitoGrande && !busy && (
+          <div className="flex flex-col items-start gap-2 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">
+            <p>Esse PDF parece grande demais para gerar de uma vez. Posso dividir em 2 partes e gerar cada uma separadamente (como se fossem 2 aulas anexadas).</p>
+            <Button type="button" variant="secondary" onClick={onDividirPdf} className="!py-1.5 !text-sm">
+              <Scissors className="h-4 w-4" strokeWidth={1.75} />
+              Dividir em 2 partes e tentar de novo
+            </Button>
           </div>
         )}
       </div>
