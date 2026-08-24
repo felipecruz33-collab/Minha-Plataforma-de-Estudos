@@ -54,8 +54,12 @@ export interface DataRepository {
   setPremium(userId: string, value: boolean): Promise<void>
   /** Exclui a conta e TODO o conteúdo dela. Só o administrador, e nunca a própria conta. */
   excluirUsuario(userId: string): Promise<void>
-  /** Quantos PDFs distintos esta conta já converteu com a IA (para o limite do plano gratuito). */
-  contarPdfsImportados(userId: string): Promise<number>
+  /**
+   * Data da PRIMEIRA conversão de cada PDF distinto desde `desdeISO`, em ordem
+   * crescente. A tela usa o tamanho pra saber quantos foram usados e a data
+   * mais antiga pra dizer quando a cota renova.
+   */
+  pdfsNoPeriodo(userId: string, desdeISO: string): Promise<string[]>
   toggleFavorito(userId: string, questaoId: string): Promise<Perfil>
   /** Só retorna dados úteis para o administrador — ver RLS em 0003_admin_lista_usuarios.sql. */
   listPerfis(): Promise<Perfil[]>

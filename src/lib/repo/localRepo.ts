@@ -1,4 +1,5 @@
 import { ordenarAulas } from '../ordenarAulas'
+import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
 import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
 import type { BackupData, DataRepository, MateriaComContagem } from './types'
 
@@ -266,11 +267,11 @@ export class LocalRepository implements DataRepository {
     save(s)
   }
 
-  async contarPdfsImportados(userId: string): Promise<number> {
+  async pdfsNoPeriodo(userId: string, desdeISO: string): Promise<string[]> {
     const s = load()
-    // Conta ARQUIVOS distintos, não linhas: um PDF dividido em vários trechos
-    // gera uma linha por aula, e cobrar isso como vários PDFs seria mentira.
-    return new Set(s.geracoes.filter((g) => g.userId === userId).map((g) => g.nomeArquivo)).size
+    return primeiraDataPorArquivo(
+      s.geracoes.filter((g) => g.userId === userId && g.criadoEm >= desdeISO).map((g) => ({ nome: g.nomeArquivo, data: g.criadoEm })),
+    )
   }
 
   async toggleFavorito(userId: string, questaoId: string): Promise<Perfil> {

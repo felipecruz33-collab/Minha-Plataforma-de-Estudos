@@ -2,7 +2,7 @@ import { AlertTriangle, CheckCircle2, Crown, FileJson, FileUp, KeyRound, Scissor
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth/AuthContext'
-import { LIMITE_PDF_GRATIS, pdfsRestantes } from '../lib/premium'
+import { JANELA_PDF_DIAS, LIMITE_PDF_GRATIS, inicioDaJanelaPdf, situacaoPdf } from '../lib/premium'
 import { repo } from '../lib/repo'
 import { validateAulaImport } from '../lib/schema'
 import { MateriaPicker, resolverNomeMateria, type EscolhaMateria } from './MateriaPicker'
@@ -27,15 +27,15 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   )
   // `null` enquanto carrega: sem isso, a tela piscaria "0 de 3 restantes" e
   // bloquearia o botão por um instante em toda visita.
-  const [pdfsUsados, setPdfsUsados] = useState<number | null>(null)
+  const [usosNaJanela, setUsosNaJanela] = useState<string[] | null>(null)
 
   useEffect(() => {
     if (!user) return
     let ativo = true
     repo
-      .contarPdfsImportados(user.id)
-      .then((n) => ativo && setPdfsUsados(n))
-      .catch(() => ativo && setPdfsUsados(0))
+      .pdfsNoPeriodo(user.id, inicioDaJanelaPdf())
+      .then((datas) => ativo && setUsosNaJanela(datas))
+      .catch(() => ativo && setUsosNaJanela([]))
     return () => {
       ativo = false
     }
@@ -43,8 +43,12 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
 
   if (!user) return null
 
-  const restantes = pdfsUsados === null ? null : pdfsRestantes(perfil, pdfsUsados)
+  const cota = usosNaJanela === null ? null : situacaoPdf(perfil, usosNaJanela)
+  const restantes = cota?.restantes ?? null
   const semPdfsRestantes = restantes === 0
+  const quandoRenova = cota?.renovaEm
+    ? cota.renovaEm.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : null
 
   /** Valida e salva uma única aula — usado tanto pelo .json manual quanto, em loop, pelo PDF (que pode gerar mais de uma). */
   async function validarEImportarUma(
@@ -156,7 +160,11 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
 
   async function onPdfFile(file: File) {
     if (semPdfsRestantes) {
-      setErrors([`Você já usou os ${LIMITE_PDF_GRATIS} PDFs do plano gratuito. Assine o Premium para converter sem limite.`])
+      setErrors([
+        `Você já usou os ${LIMITE_PDF_GRATIS} PDFs dos últimos ${JANELA_PDF_DIAS} dias.` +
+          (quandoRenova ? ` A próxima vaga abre em ${quandoRenova}.` : '') +
+          ' Assine o Premium para converter sem limite.',
+      ])
       return
     }
     if (escolhaMateria.modo === 'nova' && !escolhaMateria.nome?.trim()) {
@@ -323,7 +331,13 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                 <span>
                   {semPdfsRestantes ? (
                     <>
-                      Você já usou os <strong>{LIMITE_PDF_GRATIS} PDFs</strong> do plano gratuito.{' '}
+                      Você já usou os <strong>{LIMITE_PDF_GRATIS} PDFs</strong> dos últimos {JANELA_PDF_DIAS} dias.
+                      {quandoRenova && (
+                        <>
+                          {' '}
+                          A próxima vaga abre em <strong>{quandoRenova}</strong>.
+                        </>
+                      )}{' '}
                       <Link to="/premium" className="font-semibold underline">
                         Assine o Premium
                       </Link>{' '}
@@ -333,7 +347,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                   ) : (
                     <>
                       Plano gratuito: resta{restantes === 1 ? '' : 'm'} <strong>{restantes}</strong> de {LIMITE_PDF_GRATIS}{' '}
-                      PDF{restantes === 1 ? '' : 's'} com IA.{' '}
+                      PDF{restantes === 1 ? '' : 's'} com IA a cada {JANELA_PDF_DIAS} dias.{' '}
                       <Link to="/premium" className="font-semibold underline">
                         O Premium é sem limite
                       </Link>
