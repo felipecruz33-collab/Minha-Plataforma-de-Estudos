@@ -182,6 +182,45 @@ const RESERVA_RESPOSTA_MS = 4_000
 /** Status sintético (não vem de nenhum provedor) pra "estourou o nosso próprio teto de tempo". */
 const STATUS_TEMPO_ESGOTADO = 599
 
+// Teto de escrita. Note que, com "pensamento" ligado, os tokens de raciocínio
+// interno TAMBÉM contam aqui — por isso um teto muito baixo pode fazer o
+// modelo gastar a cota pensando e devolver resposta vazia/cortada.
+const MAX_TOKENS_SAIDA = 12000
+
+/**
+ * CAUSA PRINCIPAL DA LENTIDÃO QUE FAZIA A IMPORTAÇÃO ESTOURAR O TEMPO.
+ *
+ * Os modelos Flash atuais do Gemini vêm com "pensamento" (raciocínio interno)
+ * LIGADO por padrão: antes de escrever qualquer coisa da resposta, o modelo
+ * gera um monte de tokens internos. Isso multiplica a latência e ainda
+ * consome `maxOutputTokens` — ou seja, além de demorar, pode sobrar pouco
+ * espaço pra resposta de verdade.
+ *
+ * Desligar/minimizar resolve, mas o parâmetro MUDA conforme a geração do
+ * modelo, e misturar dá erro 400:
+ *   - Gemini 3.x  -> generationConfig.thinkingConfig.thinkingLevel: "minimal"
+ *   - Gemini 2.5  -> generationConfig.thinkingConfig.thinkingBudget: 0
+ *
+ * Como usamos o alias flutuante `gemini-flash-latest` de propósito (pra não
+ * fixar um modelo que sai de linha), não dá pra saber de antemão qual
+ * geração vai atender. Então sondamos: tentamos a variante do Gemini 3,
+ * e se vier 400 tentamos a do 2.5, e por fim sem nada. Um 400 falha na hora
+ * (o modelo nem começa a gerar), então a sondagem custa quase nada — e o
+ * resultado fica lembrado na instância, que a Vercel reaproveita entre
+ * pedidos enquanto está quente.
+ */
+type VarianteThinking = 'gemini3' | 'gemini25' | 'nenhuma'
+
+const VARIANTES_THINKING: VarianteThinking[] = ['gemini3', 'gemini25', 'nenhuma']
+
+function configThinking(variante: VarianteThinking): Record<string, unknown> {
+  if (variante === 'gemini3') return { thinkingConfig: { thinkingLevel: 'minimal' } }
+  if (variante === 'gemini25') return { thinkingConfig: { thinkingBudget: 0 } }
+  return {}
+}
+
+let varianteThinkingConhecida: VarianteThinking | null = null
+
 function msRestantes(inicio: number): number {
   return LIMITE_MS - RESERVA_RESPOSTA_MS - (Date.now() - inicio)
 }
@@ -215,20 +254,26 @@ function tentativaTempoEsgotado(provedor: ProvedorConfig['provedor']): Tentativa
 }
 
 async function chamarGemini(apiKey: string, promptTexto: string, inicio: number): Promise<Tentativa> {
-  const corpoRequisicao = JSON.stringify({
-    systemInstruction: { parts: [{ text: SYSTEM_PROMPT_GERAR_AULA }] },
-    contents: [{ role: 'user', parts: [{ text: promptTexto }] }],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseJsonSchema: AULA_GERADA_JSON_SCHEMA,
-      // Teto de escrita. Baixo de propósito: o tempo de resposta é ditado pelo
-      // tanto que a IA escreve, e 24000 tokens não terminavam dentro do minuto
-      // que a função tem. Se um trecho estourar esse teto, a saída vem
-      // marcada como cortada e o cliente racha aquele trecho sozinho — o que
-      // é bem melhor que estourar o tempo e não entregar nada.
-      maxOutputTokens: 8000,
-    },
-  })
+  const montarCorpo = (variante: VarianteThinking) =>
+    JSON.stringify({
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT_GERAR_AULA }] },
+      contents: [{ role: 'user', parts: [{ text: promptTexto }] }],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseJsonSchema: AULA_GERADA_JSON_SCHEMA,
+        maxOutputTokens: MAX_TOKENS_SAIDA,
+        ...configThinking(variante),
+      },
+    })
+
+  // Ordem de sondagem: começa pela variante que já sabemos que funciona (a
+  // instância serverless é reaproveitada entre pedidos quando está quente),
+  // mas mantém as outras na fila — assim, se o alias `gemini-flash-latest`
+  // passar a apontar pra outra geração, a sondagem se reajusta sozinha em
+  // vez de falhar pra sempre nessa instância.
+  const candidatas = varianteThinkingConhecida
+    ? [varianteThinkingConhecida, ...VARIANTES_THINKING.filter((v) => v !== varianteThinkingConhecida)]
+    : VARIANTES_THINKING
 
   // O modelo Flash gratuito às vezes devolve 503 "high demand" em pico de
   // uso — geralmente passa em poucos segundos, então tenta de novo antes
@@ -238,28 +283,46 @@ async function chamarGemini(apiKey: string, promptTexto: string, inicio: number)
   let res: Response
   let dados: GeminiResponse
   try {
-    do {
-      const espera = esperasEntreTentativas.shift()!
-      // Só espera pra tentar de novo se ainda sobrar tempo pra isso valer a pena.
-      if (espera) {
-        if (msRestantes(inicio) <= espera) return tentativaTempoEsgotado('gemini')
-        await new Promise((r) => setTimeout(r, espera))
+    for (const variante of candidatas) {
+      const corpoRequisicao = montarCorpo(variante)
+      const esperas = [...esperasEntreTentativas]
+      do {
+        const espera = esperas.shift()!
+        // Só espera pra tentar de novo se ainda sobrar tempo pra isso valer a pena.
+        if (espera) {
+          if (msRestantes(inicio) <= espera) return tentativaTempoEsgotado('gemini')
+          await new Promise((r) => setTimeout(r, espera))
+        }
+        res = await fetchComTeto(
+          GEMINI_URL,
+          { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, body: corpoRequisicao },
+          inicio,
+        )
+        dados = (await res.json()) as GeminiResponse
+      } while (res.status === 503 && esperas.length > 0)
+
+      // 400 = parâmetro de pensamento incompatível com a geração deste
+      // modelo. Isso falha na hora (nem começa a gerar), então sondar a
+      // próxima variante custa quase nada de tempo.
+      if (res.status === 400 && variante !== 'nenhuma') {
+        console.error(`gerar-aula: Gemini recusou a variante de pensamento "${variante}" (400) — tentando a próxima`)
+        if (varianteThinkingConhecida === variante) varianteThinkingConhecida = null
+        continue
       }
-      res = await fetchComTeto(
-        GEMINI_URL,
-        { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, body: corpoRequisicao },
-        inicio,
-      )
-      dados = (await res.json()) as GeminiResponse
-    } while (res.status === 503 && esperasEntreTentativas.length > 0)
+
+      // Só memoriza em caso de sucesso de verdade: um 429 (cota) ou 503
+      // (sobrecarga) não prova que esta variante é a certa pro modelo.
+      if (res.ok) varianteThinkingConhecida = variante
+      return { res, dados, provedor: 'gemini' }
+    }
+    // Todas as variantes foram recusadas — devolve a última resposta.
+    return { res: res!, dados: dados!, provedor: 'gemini' }
   } catch (err) {
     // Abortado pelo nosso teto de tempo, ou falha de rede — nos dois casos
     // vale tentar o próximo provedor da fila em vez de derrubar o pedido.
     console.error('gerar-aula: chamada ao Gemini abortada/falhou:', err instanceof Error ? err.message : err)
     return tentativaTempoEsgotado('gemini')
   }
-
-  return { res, dados, provedor: 'gemini' }
 }
 
 async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, promptTexto: string, inicio: number): Promise<Tentativa> {
@@ -270,7 +333,15 @@ async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, pro
       { role: 'user', content: promptTexto },
     ],
     response_format: { type: 'json_object' },
-    [cfg.campoMaxTokens]: 8000, // mesmo teto do Gemini — ver comentário em chamarGemini
+    [cfg.campoMaxTokens]: MAX_TOKENS_SAIDA,
+    // Mesmo problema do "pensamento" do Gemini: os modelos gpt-oss da Groq
+    // são modelos de raciocínio e vêm com reasoning_effort "medium" por
+    // padrão, o que gasta tempo antes de escrever a resposta. Aqui a tarefa
+    // é reescrever material que já está no texto, não resolver um problema
+    // difícil — então "low" entrega o mesmo resultado bem mais rápido.
+    // Só a Groq documenta esse parâmetro pros gpt-oss; na OpenRouter o
+    // modelo é sorteado entre vários, então não mandamos nada.
+    ...(cfg.id === 'groq' ? { reasoning_effort: 'low' } : {}),
   })
 
   const esperasEntreTentativas = [0, 3000]
@@ -327,13 +398,21 @@ async function chamarComReserva(
   provedores: ProvedorConfig[],
   promptTexto: string,
   inicio: number,
+  // Registro de quanto cada provedor demorou e com que resultado. Vai pra
+  // mensagem de erro quando nada dá certo: sem isso, "demorou demais" não
+  // diz QUEM demorou, e a investigação vira adivinhação.
+  diagnostico: string[] = [],
 ): Promise<{ tentativa: Tentativa; provedorUsado: ProvedorConfig }> {
   let ultima: { tentativa: Tentativa; provedorUsado: ProvedorConfig } | undefined
   for (const cfg of provedores) {
     // Sempre tenta pelo menos o primeiro provedor da lista, mesmo sem tempo
     // sobrando — só pula os seguintes quando já existe uma tentativa prévia.
     if (ultima && Date.now() - inicio > LIMITE_MS) break
+    const antes = Date.now()
     const tentativa = await chamarProvedor(cfg, promptTexto, inicio)
+    const segundos = ((Date.now() - antes) / 1000).toFixed(1)
+    const rotulo = tentativa.res.status === STATUS_TEMPO_ESGOTADO ? 'tempo esgotado' : String(tentativa.res.status)
+    diagnostico.push(`${cfg.provedor} ${segundos}s (${rotulo})`)
     if (!STATUS_TENTA_PROXIMO.has(tentativa.res.status)) {
       return { tentativa, provedorUsado: cfg }
     }
@@ -505,7 +584,8 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
       .filter(Boolean)
       .join('\n\n')
 
-    const { tentativa, provedorUsado } = await chamarComReserva(provedores, userText, inicio)
+    const diagnostico: string[] = []
+    const { tentativa, provedorUsado } = await chamarComReserva(provedores, userText, inicio, diagnostico)
     const iaRes = tentativa.res
 
     if (!iaRes.ok) {
@@ -551,8 +631,7 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
         // sozinhos a tempo e explicamos o que fazer.
         responder(504, {
           ok: false,
-          error:
-            'A IA demorou mais do que o tempo disponível para responder (o servidor tem 1 minuto por pedido). Isso costuma acontecer quando o trecho enviado é grande demais — dividir o PDF em mais partes resolve.',
+          error: `A IA demorou mais do que o tempo disponível para responder (o servidor tem 1 minuto por pedido). Tentativas: ${diagnostico.join(' · ')}.`,
           tamanhoExcessivo: true,
         })
         return
