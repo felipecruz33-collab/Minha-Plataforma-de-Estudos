@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { QuestionCard } from '../components/QuestionCard'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAuth } from '../lib/auth/AuthContext'
+import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo, type MateriaComContagem } from '../lib/repo'
 import type { Aula, Questao } from '../lib/types'
 
@@ -27,7 +28,7 @@ export default function Questoes() {
 
   useEffect(() => {
     if (!user) return
-    const podeVerBiblioteca = !!perfil?.isPremium || !!perfil?.isAdmin
+    const podeVerBiblioteca = calcPodeVerBiblioteca(perfil)
 
     Promise.all([
       repo.listMaterias(user.id),

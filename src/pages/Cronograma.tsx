@@ -5,6 +5,7 @@ import { Card } from '../components/ui/Card'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { gerarSemanasAutomatico, gerarSemanasManual } from '../lib/cronogramaGerador'
 import { useAuth } from '../lib/auth/AuthContext'
+import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo, type MateriaComContagem } from '../lib/repo'
 import type { Aula, Cronograma, ItemCronograma, SemanaCronograma } from '../lib/types'
 
@@ -53,7 +54,7 @@ export default function CronogramaPage() {
 
   useEffect(() => {
     if (!user) return
-    const podeVerBiblioteca = !!perfil?.isPremium || !!perfil?.isAdmin
+    const podeVerBiblioteca = calcPodeVerBiblioteca(perfil)
     Promise.all([
       repo.listMaterias(user.id),
       podeVerBiblioteca ? repo.listBiblioteca() : Promise.resolve<MateriaComContagem[]>([]),

@@ -10,13 +10,14 @@ import { Button } from '../components/ui/Button'
 import { TIPO_BLOCO_LABEL } from '../lib/blocoLabels'
 import { TIPO_BLOCO_ICON, TIPO_BLOCO_ICON_COR } from '../lib/blocoStyle'
 import { useAuth } from '../lib/auth/AuthContext'
+import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo } from '../lib/repo'
 import { TIPOS_COM_ABA, type Aula, type Materia } from '../lib/types'
 
 export default function AulaDetail() {
   const { aulaId } = useParams<{ aulaId: string }>()
   const { perfil } = useAuth()
-  const podeVerBiblioteca = !!perfil?.isPremium || !!perfil?.isAdmin
+  const podeVerBiblioteca = calcPodeVerBiblioteca(perfil)
   const [aula, setAula] = useState<Aula | null | undefined>(undefined)
   const [materia, setMateria] = useState<Materia | null>(null)
   const [aba, setAba] = useState('teoria')

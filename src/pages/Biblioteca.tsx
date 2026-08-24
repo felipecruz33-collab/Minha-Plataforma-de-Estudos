@@ -6,12 +6,13 @@ import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAuth } from '../lib/auth/AuthContext'
+import { podeVerBiblioteca } from '../lib/premium'
 import { repo, type MateriaComContagem } from '../lib/repo'
 
 export default function Biblioteca() {
   const { perfil } = useAuth()
   const [materias, setMaterias] = useState<MateriaComContagem[] | null>(null)
-  const acessoLiberado = !!perfil?.isPremium || !!perfil?.isAdmin
+  const acessoLiberado = podeVerBiblioteca(perfil)
 
   async function carregar() {
     setMaterias(await repo.listBiblioteca())
