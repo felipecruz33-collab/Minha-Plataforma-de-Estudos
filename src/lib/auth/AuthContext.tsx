@@ -74,7 +74,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (isSupabaseConfigured && supabase) {
         const { data, error } = await supabase.auth.signUp({ email, password })
         if (error) throw error
-        if (data.user) u = { id: data.user.id, email: data.user.email ?? email }
+        // Sem sessão de verdade = o projeto exige confirmação por e-mail e a
+        // conta ainda não foi confirmada. NÃO loga localmente aqui: fazer
+        // isso deixaria a tela parecer "logada" sem nenhuma sessão real, e
+        // toda leitura protegida por RLS falharia silenciosamente — a pessoa
+        // sairia/atualizaria a página, perderia esse estado falso, e ia
+        // parecer que a conta nunca existiu.
+        if (!data.session) {
+          throw new Error(
+            'Conta criada! Falta confirmar seu e-mail — abrimos um link de confirmação pra você (confira também a caixa de spam) antes de conseguir entrar.',
+          )
+        }
+        u = { id: data.session.user.id, email: data.session.user.email ?? email }
       } else {
         u = localAuth.signUp(email, password)
       }
@@ -82,13 +93,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(u)
       await loadPerfil(u)
       if (nome.trim()) {
-        try {
-          const p = await repo.atualizarNome(u.id, nome.trim())
-          setPerfil(p)
-        } catch {
-          // Sem sessão autenticada ainda (ex.: aguardando confirmação de e-mail) —
-          // a pessoa pode preencher o nome depois em "Perfil".
-        }
+        const p = await repo.atualizarNome(u.id, nome.trim())
+        setPerfil(p)
       }
     },
     [loadPerfil],
@@ -98,7 +104,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (email: string, password: string) => {
       if (isSupabaseConfigured && supabase) {
         const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-        if (error) throw error
+        if (error) {
+          if (error.code === 'email_not_confirmed') {
+            throw new Error('Falta confirmar seu e-mail antes de entrar — veja o link que mandamos (confira também a caixa de spam).')
+          }
+          throw error
+        }
         if (data.user) {
           const u = { id: data.user.id, email: data.user.email ?? email }
           setUser(u)
