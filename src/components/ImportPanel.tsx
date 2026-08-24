@@ -21,7 +21,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   const [etapa, setEtapa] = useState<string | null>(null)
   const [errors, setErrors] = useState<string[]>([])
   const [sucesso, setSucesso] = useState<string | null>(null)
-  const [pdfMuitoGrande, setPdfMuitoGrande] = useState<{ texto: string; nomeArquivo: string } | null>(null)
+  const [pdfMuitoGrande, setPdfMuitoGrande] = useState<{ texto: string; nomeArquivo: string; partes: number } | null>(null)
 
   if (!user) return null
 
@@ -145,16 +145,31 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
     const nomeEscolhido = resolverNomeMateria(escolhaMateria)
     try {
       setEtapa('Lendo o PDF…')
-      const { gerarAulaViaIA } = await import('../lib/ai/pdfToAula')
+      const { extrairTextoPdf, gerarAulaViaIA, partesRecomendadas } = await import('../lib/ai/pdfToAula')
+      const texto = await extrairTextoPdf(file)
+      if (!texto) throw new Error('Não foi possível extrair texto deste PDF (pode ser um PDF escaneado sem OCR).')
+
+      const partes = partesRecomendadas(texto.length)
+      if (partes > 1) {
+        // Já dá pra saber de antemão que é grande demais — nem tenta gerar
+        // de uma vez só (evitaria só bater no limite de tempo/tokens e
+        // devolver um erro confuso). Oferece a divisão direto.
+        setPdfMuitoGrande({ texto, nomeArquivo: file.name, partes })
+        return
+      }
+
       setEtapa('Gerando a aula com IA (pode levar até 1 minuto)…')
-      const payloads = await gerarAulaViaIA(file, nomeEscolhido, perfil?.chaveGemini)
+      const payloads = await gerarAulaViaIA(texto, nomeEscolhido, file.name, perfil?.chaveGemini)
       await salvarPayloadsGerados(payloads, file.name, nomeEscolhido)
     } catch (e) {
-      const { PdfMuitoGrandeError } = await import('../lib/ai/pdfToAula')
+      const { PdfMuitoGrandeError, partesRecomendadas } = await import('../lib/ai/pdfToAula')
       const mensagem = e instanceof Error ? e.message : 'Erro inesperado ao gerar a aula a partir do PDF.'
       setErrors([mensagem])
       if (e instanceof PdfMuitoGrandeError) {
-        setPdfMuitoGrande({ texto: e.textoCompleto, nomeArquivo: file.name })
+        // Mesmo um texto "dentro do esperado" às vezes falha na prática — se
+        // isso acontecer, sempre oferece pelo menos 2 partes.
+        const partes = Math.max(2, partesRecomendadas(e.textoCompleto.length))
+        setPdfMuitoGrande({ texto: e.textoCompleto, nomeArquivo: file.name, partes })
       }
       await repo.addGeracao({
         userId: user!.id,
@@ -180,8 +195,13 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
     const nomeEscolhido = resolverNomeMateria(escolhaMateria)
     try {
       const { gerarAulaViaIADividida } = await import('../lib/ai/pdfToAula')
-      const payloads = await gerarAulaViaIADividida(alvo.texto, nomeEscolhido ?? undefined, alvo.nomeArquivo, perfil?.chaveGemini, (parte) =>
-        setEtapa(`Gerando parte ${parte} de 2 (pode levar até 1 minuto cada)…`),
+      const payloads = await gerarAulaViaIADividida(
+        alvo.texto,
+        alvo.partes,
+        nomeEscolhido ?? undefined,
+        alvo.nomeArquivo,
+        perfil?.chaveGemini,
+        (parte, total) => setEtapa(`Gerando parte ${parte} de ${total} (pode levar até 1 minuto cada)…`),
       )
       await salvarPayloadsGerados(payloads, alvo.nomeArquivo, nomeEscolhido)
     } catch (e) {
@@ -301,10 +321,13 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
 
         {pdfMuitoGrande && !busy && (
           <div className="flex flex-col items-start gap-2 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">
-            <p>Esse PDF parece grande demais para gerar de uma vez. Posso dividir em 2 partes e gerar cada uma separadamente (como se fossem 2 aulas anexadas).</p>
+            <p>
+              Esse PDF é grande demais para gerar de uma vez. Posso dividir em {pdfMuitoGrande.partes} partes e gerar cada uma
+              separadamente (como se fossem {pdfMuitoGrande.partes} aulas anexadas).
+            </p>
             <Button type="button" variant="secondary" onClick={onDividirPdf} className="!py-1.5 !text-sm">
               <Scissors className="h-4 w-4" strokeWidth={1.75} />
-              Dividir em 2 partes e tentar de novo
+              Dividir em {pdfMuitoGrande.partes} partes e tentar de novo
             </Button>
           </div>
         )}
