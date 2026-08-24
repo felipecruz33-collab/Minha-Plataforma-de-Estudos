@@ -226,20 +226,30 @@ function msRestantes(inicio: number): number {
 }
 
 /**
- * `fetch` com teto de tempo próprio, calculado pelo que ainda sobra do
- * orçamento da função. Sem isso, uma única chamada travada num provedor
- * passa direto pelo controle de tempo (que só valia ENTRE provedores),
- * estoura os 60s e faz a Vercel matar a função no meio — devolvendo HTML em
- * vez do nosso JSON. Com o teto, sempre desistimos antes e respondemos nós.
+ * `fetch` + leitura do corpo com teto de tempo próprio, calculado pelo que
+ * ainda sobra do orçamento da função.
+ *
+ * ATENÇÃO ao detalhe que já causou bug aqui: `fetch()` resolve quando chegam
+ * os CABEÇALHOS, não quando o corpo termina. A versão anterior desarmava o
+ * timer (`clearTimeout`) assim que o fetch resolvia e só então lia o corpo —
+ * deixando a leitura do corpo SEM teto algum. E é exatamente aí que uma API
+ * de IA demora: ela devolve "200 OK" rápido e leva muito tempo gerando o
+ * texto. Resultado: o abort nunca disparava e a função batia no limite da
+ * plataforma.
+ *
+ * Por isso o corpo é lido AQUI DENTRO, ainda sob o mesmo AbortController: o
+ * timer só é desarmado depois que a resposta inteira chegou.
  */
-async function fetchComTeto(url: string, opcoes: RequestInit, inicio: number): Promise<Response> {
+async function postJsonComTeto<T>(url: string, opcoes: RequestInit, inicio: number): Promise<{ res: Response; dados: T }> {
   const restante = msRestantes(inicio)
   if (restante <= 0) throw new Error('Sem orçamento de tempo restante para chamar a IA.')
 
   const controlador = new AbortController()
   const timer = setTimeout(() => controlador.abort(), restante)
   try {
-    return await fetch(url, { ...opcoes, signal: controlador.signal })
+    const res = await fetch(url, { ...opcoes, signal: controlador.signal })
+    const dados = (await res.json()) as T
+    return { res, dados }
   } finally {
     clearTimeout(timer)
   }
@@ -293,12 +303,11 @@ async function chamarGemini(apiKey: string, promptTexto: string, inicio: number)
           if (msRestantes(inicio) <= espera) return tentativaTempoEsgotado('gemini')
           await new Promise((r) => setTimeout(r, espera))
         }
-        res = await fetchComTeto(
+        ;({ res, dados } = await postJsonComTeto<GeminiResponse>(
           GEMINI_URL,
           { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, body: corpoRequisicao },
           inicio,
-        )
-        dados = (await res.json()) as GeminiResponse
+        ))
       } while (res.status === 503 && esperas.length > 0)
 
       // 400 = parâmetro de pensamento incompatível com a geração deste
@@ -354,12 +363,11 @@ async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, pro
         if (msRestantes(inicio) <= espera) return tentativaTempoEsgotado(cfg.id)
         await new Promise((r) => setTimeout(r, espera))
       }
-      res = await fetchComTeto(
+      ;({ res, dados } = await postJsonComTeto<OpenAiCompatResponse>(
         cfg.url,
         { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, body: corpoRequisicao },
         inicio,
-      )
-      dados = (await res.json()) as OpenAiCompatResponse
+      ))
     } while (res.status === 503 && esperasEntreTentativas.length > 0)
   } catch (err) {
     console.error(`gerar-aula: chamada à ${cfg.id} abortada/falhou:`, err instanceof Error ? err.message : err)
@@ -394,6 +402,31 @@ async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string, inicio: 
 // rede" — também vale tentar o próximo provedor, que pode estar mais rápido.
 const STATUS_TENTA_PROXIMO = new Set([413, 429, 503, STATUS_TEMPO_ESGOTADO])
 
+// Quanto esperamos por um provedor antes de colocar o PRÓXIMO pra trabalhar
+// em paralelo com ele. Ver `chamarComReserva`.
+const ATRASO_PARALELO_MS = 12_000
+
+/**
+ * Aciona os provedores de forma escalonada e fica com a PRIMEIRA resposta boa.
+ *
+ * Antes isso era uma fila estrita: só chamava o segundo provedor depois que o
+ * primeiro terminasse. O problema é que o modo de falha mais comum aqui não é
+ * "o provedor recusou" (rápido), e sim "o provedor está lento" — e nesse caso
+ * o primeiro da fila sozinho consumia todo o orçamento de tempo, e os outros
+ * nem chegavam a ser tentados. Era garantia de estourar o tempo sempre que o
+ * provedor principal estivesse ruim.
+ *
+ * Agora: o primeiro provedor começa na hora; se em ATRASO_PARALELO_MS ele
+ * ainda não respondeu, o próximo entra EM PARALELO (e assim por diante).
+ * Quem responder primeiro com algo aproveitável vence, e os demais são
+ * descartados. O tempo total passa a ser o do provedor MAIS RÁPIDO, em vez da
+ * soma dos lentos.
+ *
+ * Um provedor que falha rápido (cota, sobrecarga) também adianta o próximo na
+ * hora, sem esperar o escalonamento. E no caminho feliz — resposta rápida do
+ * primeiro — nenhum provedor extra chega a ser acionado, então não há
+ * desperdício de cota.
+ */
 async function chamarComReserva(
   provedores: ProvedorConfig[],
   promptTexto: string,
@@ -403,22 +436,63 @@ async function chamarComReserva(
   // diz QUEM demorou, e a investigação vira adivinhação.
   diagnostico: string[] = [],
 ): Promise<{ tentativa: Tentativa; provedorUsado: ProvedorConfig }> {
-  let ultima: { tentativa: Tentativa; provedorUsado: ProvedorConfig } | undefined
-  for (const cfg of provedores) {
-    // Sempre tenta pelo menos o primeiro provedor da lista, mesmo sem tempo
-    // sobrando — só pula os seguintes quando já existe uma tentativa prévia.
-    if (ultima && Date.now() - inicio > LIMITE_MS) break
-    const antes = Date.now()
-    const tentativa = await chamarProvedor(cfg, promptTexto, inicio)
-    const segundos = ((Date.now() - antes) / 1000).toFixed(1)
-    const rotulo = tentativa.res.status === STATUS_TEMPO_ESGOTADO ? 'tempo esgotado' : String(tentativa.res.status)
-    diagnostico.push(`${cfg.provedor} ${segundos}s (${rotulo})`)
-    if (!STATUS_TENTA_PROXIMO.has(tentativa.res.status)) {
-      return { tentativa, provedorUsado: cfg }
+  return new Promise((resolve) => {
+    let resolvido = false
+    let lancados = 0
+    let emVoo = 0
+    let ultima: { tentativa: Tentativa; provedorUsado: ProvedorConfig } | undefined
+    const timers: ReturnType<typeof setTimeout>[] = []
+
+    const encerrar = (resultado: { tentativa: Tentativa; provedorUsado: ProvedorConfig }) => {
+      if (resolvido) return
+      resolvido = true
+      timers.forEach(clearTimeout)
+      resolve(resultado)
     }
-    ultima = { tentativa, provedorUsado: cfg }
-  }
-  return ultima!
+
+    const lancarProximo = () => {
+      if (resolvido || lancados >= provedores.length) return
+      // Sem orçamento pra mais uma chamada: deixa as que já estão em voo
+      // terminarem em vez de abrir outra que não teria tempo de responder.
+      if (lancados > 0 && msRestantes(inicio) <= 0) return
+
+      const cfg = provedores[lancados++]
+      emVoo++
+      const antes = Date.now()
+
+      chamarProvedor(cfg, promptTexto, inicio)
+        .then((tentativa) => {
+          const segundos = ((Date.now() - antes) / 1000).toFixed(1)
+          const rotulo = tentativa.res.status === STATUS_TEMPO_ESGOTADO ? 'tempo esgotado' : String(tentativa.res.status)
+          diagnostico.push(`${cfg.provedor} ${segundos}s (${rotulo})`)
+
+          if (STATUS_TENTA_PROXIMO.has(tentativa.res.status)) {
+            // Falhou de um jeito que outro provedor pode resolver: guarda como
+            // último recurso e adianta o próximo agora, sem esperar o relógio.
+            ultima = { tentativa, provedorUsado: cfg }
+            lancarProximo()
+            return
+          }
+          encerrar({ tentativa, provedorUsado: cfg })
+        })
+        .catch((err) => {
+          console.error(`gerar-aula: falha inesperada no provedor ${cfg.provedor}:`, err)
+          diagnostico.push(`${cfg.provedor} (falha inesperada)`)
+          lancarProximo()
+        })
+        .finally(() => {
+          emVoo--
+          // Todos terminaram e nenhum serviu: devolve a última tentativa, que
+          // carrega o status usado pra montar a mensagem de erro certa.
+          if (!resolvido && emVoo === 0 && lancados >= provedores.length && ultima) encerrar(ultima)
+        })
+
+      // Escalona o próximo pra entrar em paralelo se este demorar.
+      if (lancados < provedores.length) timers.push(setTimeout(lancarProximo, ATRASO_PARALELO_MS))
+    }
+
+    lancarProximo()
+  })
 }
 
 interface ResultadoExtraido {
@@ -461,7 +535,7 @@ const RESPOSTA_GARANTIDA_MS = 52_000
 /**
  * Rede de segurança final contra FUNCTION_INVOCATION_TIMEOUT.
  *
- * Os tetos de tempo por requisição (`fetchComTeto`) já deveriam bastar, mas
+ * Os tetos de tempo por requisição (`postJsonComTeto`) já deveriam bastar, mas
  * se alguma chamada externa travar de um jeito que o AbortController não
  * interrompa, a Vercel encerra a função e o navegador recebe uma página HTML
  * de erro — ilegível pro usuário e impossível de tratar no cliente. Aqui
