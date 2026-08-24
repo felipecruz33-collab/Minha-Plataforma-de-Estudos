@@ -258,6 +258,16 @@ function configThinking(variante: VarianteThinking): Record<string, unknown> {
 
 let varianteThinkingConhecida: VarianteThinking | null = null
 
+/**
+ * Distingue "400 por causa da chave" de "400 por causa do parâmetro de
+ * pensamento". Confirmado contra a API real: o Google valida a chave antes de
+ * olhar o corpo, então os dois casos chegam com o mesmo código.
+ */
+function ehErroDeChave(dados: GeminiResponse): boolean {
+  const msg = `${dados.error?.message ?? ''} ${dados.error?.status ?? ''}`.toUpperCase()
+  return msg.includes('API KEY') || msg.includes('API_KEY') || msg.includes('PERMISSION')
+}
+
 function msRestantes(inicio: number): number {
   return LIMITE_MS - RESERVA_RESPOSTA_MS - (Date.now() - inicio)
 }
@@ -350,6 +360,15 @@ async function chamarGemini(apiKey: string, promptTexto: string, inicio: number)
       // 400 = parâmetro de pensamento incompatível com a geração deste
       // modelo. Isso falha na hora (nem começa a gerar), então sondar a
       // próxima variante custa quase nada de tempo.
+      //
+      // MAS: chave inválida também devolve 400 — testei contra a API real e
+      // o Google valida a chave ANTES de olhar o corpo, então os dois casos
+      // chegam aqui iguais. Sem essa distinção, uma chave errada faria a
+      // sondagem gastar as três variantes em toda chamada, sempre em vão.
+      if (res.status === 400 && ehErroDeChave(dados)) {
+        console.error('gerar-aula: Gemini recusou a chave (400) — não é a variante de pensamento')
+        return { res, dados, provedor: 'gemini' }
+      }
       if (res.status === 400 && variante !== 'nenhuma') {
         console.error(`gerar-aula: Gemini recusou a variante de pensamento "${variante}" (400) — tentando a próxima`)
         if (varianteThinkingConhecida === variante) varianteThinkingConhecida = null
