@@ -26,9 +26,9 @@ export async function extrairTextoPdf(file: File): Promise<{ texto: string; numP
 // Um PDF muito longo tende a bater no orçamento de tempo da função (LIMITE_MS
 // em api/gerar-aula.ts) ou no limite de tokens/minuto dos provedores de
 // reserva gratuitos antes de terminar — daí o "resposta não veio em JSON".
-// Por isso dividimos em partes de ~30 páginas em média, na página em vez do
+// Por isso dividimos em partes de ~25 páginas em média, na página em vez do
 // tamanho do texto (mais previsível pra quem está escolhendo o PDF).
-const PAGINAS_POR_PARTE = 30
+const PAGINAS_POR_PARTE = 25
 
 // Teto de segurança bem folgado, só pra nunca fazer um número absurdo de
 // chamadas sequenciais num PDF extremamente longo — não é o critério

@@ -324,36 +324,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     chaveUsuario?: string
   }
 
-  // Prioriza a chave própria do usuário (evita fila compartilhada), depois a
-  // chave principal e a(s) reserva(s) do Gemini na plataforma e, só se todas
-  // essas estiverem sem cota ou sobrecarregadas, cai pra Groq e depois pra
-  // OpenRouter — outros provedores gratuitos, não-Google, configuráveis só
-  // pela plataforma. Cada item é opcional: sem nenhuma configuração extra, o
-  // comportamento é o mesmo de sempre (só a chave do usuário e/ou
-  // GEMINI_API_KEY). GEMINI_API_KEY_RESERVA, GROQ_API_KEY e
-  // OPENROUTER_API_KEY aceitam mais de uma chave, separadas por vírgula ou
-  // quebra de linha — pra adicionar mais reservas basta colar outra chave na
-  // mesma variável na Vercel, sem precisar mexer no código.
+  // Ordem de prioridade da cascata (pedida explicitamente pelo usuário):
+  // 1) Gemini principal (chave própria do usuário, evitando fila
+  //    compartilhada, + GEMINI_API_KEY da plataforma)
+  // 2) OpenRouter
+  // 3) Groq
+  // 4) Gemini reserva (GEMINI_API_KEY_RESERVA) — por último
+  // Cada item é opcional: sem nenhuma configuração extra, o comportamento é
+  // o mesmo de sempre (só a chave do usuário e/ou GEMINI_API_KEY).
+  // GEMINI_API_KEY_RESERVA, GROQ_API_KEY e OPENROUTER_API_KEY aceitam mais
+  // de uma chave, separadas por vírgula ou quebra de linha — pra adicionar
+  // mais reservas basta colar outra chave na mesma variável na Vercel, sem
+  // precisar mexer no código.
   const dividirChaves = (valor: string | undefined) =>
     (valor ?? '')
       .split(/[,\n]/)
       .map((k) => k.trim())
       .filter(Boolean)
 
-  const chavesGemini = Array.from(
-    new Set([
-      ...(chaveUsuario?.trim() ? [chaveUsuario.trim()] : []),
-      ...dividirChaves(process.env.GEMINI_API_KEY),
-      ...dividirChaves(process.env.GEMINI_API_KEY_RESERVA),
-    ]),
+  const chavesGeminiPrincipal = Array.from(
+    new Set([...(chaveUsuario?.trim() ? [chaveUsuario.trim()] : []), ...dividirChaves(process.env.GEMINI_API_KEY)]),
   )
+  const chavesGeminiReserva = Array.from(new Set(dividirChaves(process.env.GEMINI_API_KEY_RESERVA)))
   const chavesGroq = Array.from(new Set(dividirChaves(process.env.GROQ_API_KEY)))
   const chavesOpenRouter = Array.from(new Set(dividirChaves(process.env.OPENROUTER_API_KEY)))
-  const provedores: ProvedorConfig[] = [
-    ...chavesGemini.map((chave): ProvedorConfig => ({ provedor: 'gemini', chave })),
-    ...chavesGroq.map((chave): ProvedorConfig => ({ provedor: 'groq' as const, chave })),
+
+  const provedoresBrutos: ProvedorConfig[] = [
+    ...chavesGeminiPrincipal.map((chave): ProvedorConfig => ({ provedor: 'gemini', chave })),
     ...chavesOpenRouter.map((chave): ProvedorConfig => ({ provedor: 'openrouter' as const, chave })),
+    ...chavesGroq.map((chave): ProvedorConfig => ({ provedor: 'groq' as const, chave })),
+    ...chavesGeminiReserva.map((chave): ProvedorConfig => ({ provedor: 'gemini' as const, chave })),
   ]
+  // Remove duplicatas exatas (mesmo provedor + mesma chave) que possam
+  // aparecer em mais de uma variável de ambiente, mantendo a 1ª posição —
+  // agora que o Gemini está em dois grupos separados (principal e reserva),
+  // uma chave repetida entre eles não deve ser tentada duas vezes.
+  const vistos = new Set<string>()
+  const provedores = provedoresBrutos.filter((p) => {
+    const chaveUnica = `${p.provedor}:${p.chave}`
+    if (vistos.has(chaveUnica)) return false
+    vistos.add(chaveUnica)
+    return true
+  })
   if (provedores.length === 0) {
     res.status(500).json({
       ok: false,
