@@ -17,42 +17,40 @@ async function extractText(file: File): Promise<string[]> {
   return pages
 }
 
-/** Extrai o texto do PDF inteiro (todas as páginas, separadas por linha em branco). */
-export async function extrairTextoPdf(file: File): Promise<string> {
+/** Extrai o texto do PDF inteiro (todas as páginas, separadas por linha em branco) e a contagem de páginas. */
+export async function extrairTextoPdf(file: File): Promise<{ texto: string; numPaginas: number }> {
   const paginas = await extractText(file)
-  return paginas.join('\n\n').trim()
+  return { texto: paginas.join('\n\n').trim(), numPaginas: paginas.length }
 }
 
-// Estimativa conservadora (não medida em produção — ajustar se ainda faltar
-// tempo/tokens na prática) de até onde um PDF costuma gerar de uma vez só
-// dentro do orçamento de tempo da função (LIMITE_MS em api/gerar-aula.ts) e
-// do limite de tokens/minuto dos provedores de reserva gratuitos. Um PDF
-// bem maior que isso tende a bater no "resposta não veio em JSON" (função
-// encerrada pela plataforma) antes de terminar — por isso, nesse caso, nem
-// tentamos de uma vez: já dividimos de saída, evitando a tentativa que
-// sabemos que provavelmente vai falhar.
-const TEXTO_SEGURO_CHARS = 90_000
+// Um PDF muito longo tende a bater no orçamento de tempo da função (LIMITE_MS
+// em api/gerar-aula.ts) ou no limite de tokens/minuto dos provedores de
+// reserva gratuitos antes de terminar — daí o "resposta não veio em JSON".
+// Por isso dividimos em partes de ~30 páginas em média, na página em vez do
+// tamanho do texto (mais previsível pra quem está escolhendo o PDF).
+const PAGINAS_POR_PARTE = 30
 
-// Não divide em mais partes que isso, mesmo pra PDFs enormes — cada parte
-// vira uma "aula" separada na biblioteca, então fragmentar demais piora a
-// experiência (muitas aulas pequenas em vez de poucas bem completas).
-const MAX_PARTES = 4
+// Teto de segurança bem folgado, só pra nunca fazer um número absurdo de
+// chamadas sequenciais num PDF extremamente longo — não é o critério
+// principal (que é o tamanho médio por parte, PAGINAS_POR_PARTE).
+const MAX_PARTES = 20
 
-/** Quantas partes o sistema recomenda gerar separadamente pra um texto desse tamanho (1 = não precisa dividir). */
-export function partesRecomendadas(tamanhoTexto: number): number {
-  return Math.min(MAX_PARTES, Math.max(1, Math.ceil(tamanhoTexto / TEXTO_SEGURO_CHARS)))
+/** Quantas partes o sistema recomenda gerar separadamente pra um PDF com esse número de páginas (1 = não precisa dividir). */
+export function partesRecomendadas(numPaginas: number): number {
+  return Math.min(MAX_PARTES, Math.max(1, Math.round(numPaginas / PAGINAS_POR_PARTE)))
 }
 
 /**
  * Erro específico pra quando o PDF é grande demais pra gerar de uma vez só
  * (o servidor sinaliza isso via `tamanhoExcessivo` — ver api/gerar-aula.ts).
- * Carrega o texto já extraído do PDF pra permitir tentar de novo dividido em
- * partes sem precisar reler o arquivo.
+ * Carrega o texto já extraído do PDF e o número de páginas pra permitir
+ * tentar de novo dividido em partes sem precisar reler o arquivo.
  */
 export class PdfMuitoGrandeError extends Error {
   constructor(
     message: string,
     public readonly textoCompleto: string,
+    public readonly numPaginas: number,
   ) {
     super(message)
     this.name = 'PdfMuitoGrandeError'
@@ -61,6 +59,7 @@ export class PdfMuitoGrandeError extends Error {
 
 async function gerarAulasDoTexto(
   texto: string,
+  numPaginas: number,
   materiaOverride: string | undefined,
   nomeArquivo: string,
   chaveUsuario: string | null | undefined,
@@ -83,13 +82,13 @@ async function gerarAulasDoTexto(
     // Sem corpo JSON pra ler, mas na prática essa falha (function serverless
     // encerrada pela plataforma) costuma ser causada por um PDF grande
     // demais pro tempo disponível — mesmo alívio de dividir em mais partes.
-    throw new PdfMuitoGrandeError('Endpoint de IA indisponível neste ambiente (resposta não veio em JSON).', texto)
+    throw new PdfMuitoGrandeError('Endpoint de IA indisponível neste ambiente (resposta não veio em JSON).', texto, numPaginas)
   }
 
   const dados = (await resposta.json()) as { ok: boolean; payload?: AulaImportPayload[]; error?: string; tamanhoExcessivo?: boolean }
   if (!resposta.ok || !dados.ok || !dados.payload?.length) {
     const mensagem = dados.error || 'Não foi possível gerar a aula a partir deste PDF.'
-    if (dados.tamanhoExcessivo) throw new PdfMuitoGrandeError(mensagem, texto)
+    if (dados.tamanhoExcessivo) throw new PdfMuitoGrandeError(mensagem, texto, numPaginas)
     throw new Error(mensagem)
   }
 
@@ -158,11 +157,12 @@ function dividirTextoEmPartes(texto: string, numPartes: number): string[] {
  */
 export async function gerarAulaViaIA(
   texto: string,
+  numPaginas: number,
   materiaOverride: string | undefined,
   nomeArquivo: string,
   chaveUsuario: string | null | undefined,
 ): Promise<AulaImportPayload[]> {
-  return gerarAulasDoTexto(texto, materiaOverride, nomeArquivo, chaveUsuario)
+  return gerarAulasDoTexto(texto, numPaginas, materiaOverride, nomeArquivo, chaveUsuario)
 }
 
 /**
@@ -174,6 +174,7 @@ export async function gerarAulaViaIA(
  */
 export async function gerarAulaViaIADividida(
   textoCompleto: string,
+  numPaginas: number,
   numPartes: number,
   materiaOverride: string | undefined,
   nomeArquivo: string,
@@ -181,11 +182,12 @@ export async function gerarAulaViaIADividida(
   onProgresso?: (parte: number, total: number) => void,
 ): Promise<AulaImportPayload[]> {
   const partes = dividirTextoEmPartes(textoCompleto, numPartes)
+  const paginasPorParte = Math.max(1, Math.round(numPaginas / partes.length))
 
   const aulas: AulaImportPayload[] = []
   for (let i = 0; i < partes.length; i++) {
     onProgresso?.(i + 1, partes.length)
-    aulas.push(...(await gerarAulasDoTexto(partes[i], materiaOverride, nomeArquivo, chaveUsuario)))
+    aulas.push(...(await gerarAulasDoTexto(partes[i], paginasPorParte, materiaOverride, nomeArquivo, chaveUsuario)))
   }
   return aulas
 }
