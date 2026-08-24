@@ -1,4 +1,5 @@
 import { supabase } from '../supabaseClient'
+import { ordenarAulas } from '../ordenarAulas'
 import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
 import type { BackupData, DataRepository, MateriaComContagem } from './types'
 
@@ -80,6 +81,7 @@ export class SupabaseRepository implements DataRepository {
       id: row.id,
       materiaId: row.materia_id,
       titulo: row.titulo,
+      ordem: row.ordem ?? null,
       criadoEm: row.criado_em,
       atualizadoEm: row.atualizado_em,
       blocos: (blocos ?? []).map((b: any) => ({ tipo: b.tipo, ordem: b.ordem, html: b.html }) as Bloco),
@@ -106,7 +108,10 @@ export class SupabaseRepository implements DataRepository {
   async listAulas(materiaId: string): Promise<Aula[]> {
     const { data, error } = await this.db().from('aulas').select('*').eq('materia_id', materiaId)
     if (error) throw error
-    return Promise.all((data ?? []).map((row) => this.hydrateAula(row)))
+    // A ordenação é feita aqui (e não no banco) pra ser exatamente a mesma
+    // regra dos dois repositórios — inclusive o desempate entre aulas
+    // organizadas e nunca organizadas.
+    return ordenarAulas(await Promise.all((data ?? []).map((row) => this.hydrateAula(row))))
   }
 
   async getAula(aulaId: string): Promise<Aula | null> {
@@ -192,6 +197,23 @@ export class SupabaseRepository implements DataRepository {
   async deleteAula(aulaId: string): Promise<void> {
     const { error } = await this.db().from('aulas').delete().eq('id', aulaId)
     if (error) throw error
+  }
+
+  async renomearAula(aulaId: string, titulo: string): Promise<Aula> {
+    const { data, error } = await this.db().from('aulas').update({ titulo }).eq('id', aulaId).select().single()
+    if (error) throw error
+    return this.hydrateAula(data)
+  }
+
+  async reordenarAulas(materiaId: string, aulaIdsEmOrdem: string[]): Promise<void> {
+    // Uma atualização por aula em vez de um upsert em lote: o upsert exigiria
+    // mandar a linha inteira de volta, e um campo esquecido no caminho
+    // apagaria dado de verdade. Aqui só a coluna `ordem` é tocada.
+    const resultados = await Promise.all(
+      aulaIdsEmOrdem.map((aulaId, i) => this.db().from('aulas').update({ ordem: i }).eq('id', aulaId).eq('materia_id', materiaId)),
+    )
+    const falha = resultados.find((r) => r.error)
+    if (falha?.error) throw falha.error
   }
 
   async listRespostas(userId: string): Promise<Resposta[]> {

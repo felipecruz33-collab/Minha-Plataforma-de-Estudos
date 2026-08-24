@@ -46,6 +46,12 @@ export interface Aula {
   titulo: string
   blocos: Bloco[]
   questoes: Questao[]
+  /**
+   * Posição escolhida pelo usuário dentro da matéria. `null` significa "nunca
+   * foi organizada" — nesse caso vale a ordem de criação. Manter os dois casos
+   * separados evita ter que inventar uma ordem pra tudo que já existe.
+   */
+  ordem: number | null
   criadoEm: string
   atualizadoEm: string
 }
