@@ -1,3 +1,4 @@
+import { ordenarAulas } from '../ordenarAulas'
 import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
 import type { BackupData, DataRepository, MateriaComContagem } from './types'
 
@@ -91,7 +92,7 @@ export class LocalRepository implements DataRepository {
 
   async listAulas(materiaId: string): Promise<Aula[]> {
     const s = load()
-    return s.aulas.filter((a) => a.materiaId === materiaId)
+    return ordenarAulas(s.aulas.filter((a) => a.materiaId === materiaId))
   }
 
   async getAula(aulaId: string): Promise<Aula | null> {
@@ -153,6 +154,9 @@ export class LocalRepository implements DataRepository {
       titulo: payload.aula.titulo,
       blocos,
       questoes,
+      // Aula reimportada mantém a posição que já tinha; aula nova entra sem
+      // ordem definida, e `ordenarAulas` a coloca no fim da lista.
+      ordem: existente?.ordem ?? null,
       criadoEm: existente?.criadoEm ?? now,
       atualizadoEm: now,
     }
@@ -166,6 +170,27 @@ export class LocalRepository implements DataRepository {
     const s = load()
     s.aulas = s.aulas.filter((a) => a.id !== aulaId)
     s.respostas = s.respostas.filter((r) => r.aulaId !== aulaId)
+    save(s)
+  }
+
+  async renomearAula(aulaId: string, titulo: string): Promise<Aula> {
+    const s = load()
+    const aula = s.aulas.find((a) => a.id === aulaId)
+    if (!aula) throw new Error('Aula não encontrada')
+    aula.titulo = titulo
+    aula.atualizadoEm = new Date().toISOString()
+    save(s)
+    return aula
+  }
+
+  async reordenarAulas(materiaId: string, aulaIdsEmOrdem: string[]): Promise<void> {
+    const s = load()
+    const posicao = new Map(aulaIdsEmOrdem.map((id, i) => [id, i]))
+    for (const aula of s.aulas) {
+      if (aula.materiaId !== materiaId) continue
+      const p = posicao.get(aula.id)
+      if (p !== undefined) aula.ordem = p
+    }
     save(s)
   }
 
