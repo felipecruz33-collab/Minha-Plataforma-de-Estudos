@@ -1180,18 +1180,33 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
         return
       }
 
+      // O texto do PDF NÃO entra aqui de propósito. O reparo é um conserto de
+      // estrutura sobre um JSON que já existe — não precisa reler a fonte. Ele
+      // estava indo junto, o que dobrava a entrada da chamada e, nos provedores
+      // gratuitos, estourava o limite por minuto (a Groq corta em 8.000): o
+      // reparo falhava por tamanho, não por dificuldade.
       const promptReparo = [
-        userText,
+        'Abaixo está um JSON que saiu com a estrutura errada, seguido dos erros encontrados.',
         '--- TENTATIVA ANTERIOR (INVÁLIDA) ---',
         textoResposta,
         '--- ERROS DE ESTRUTURA ENCONTRADOS ---',
-        erros.join('\n'),
+        erros.slice(0, 20).join('\n'),
         'Corrija SOMENTE esses problemas estruturais no JSON acima. Não altere o conteúdo pedagógico, não remova nem invente questões, não invente informação que não estava lá. Devolva o JSON corrigido completo, com a mesma estrutura geral.',
       ].join('\n\n')
 
-      const reparo = await chamarProvedor(provedorUsado, promptReparo, inicio)
+      // O reparo passa pela cascata inteira, não só pelo provedor que acabou
+      // de responder. Esse provedor é justamente o que tem mais chance de
+      // recusar agora: acabou de consumir a cota do minuto com a geração. Era
+      // esse o caminho da mensagem "a correção automática falhou".
+      const diagnosticoReparo: string[] = []
+      const { tentativa: reparo } = await chamarComReserva(provedores, promptReparo, inicio, diagnosticoReparo)
       if (!reparo.res.ok) {
-        responder(502, { ok: false, error: 'A IA devolveu um formato inválido e a correção automática falhou. Tente novamente.' })
+        responder(502, {
+          ok: false,
+          // Sem os erros de estrutura aqui, essa mensagem não dizia NADA sobre
+          // o que estava errado — nem pro usuário, nem pra quem for investigar.
+          error: `A IA devolveu um formato inválido e a correção automática falhou (${diagnosticoReparo.join(' · ')}). O que estava fora do formato: ${erros.slice(0, 3).join('; ')}.`,
+        })
         return
       }
       textoResposta = extrairResultado(reparo).texto

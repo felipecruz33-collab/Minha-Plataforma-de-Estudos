@@ -118,16 +118,43 @@ function normalizarQuestao(q: unknown, temaPadrao: string): Record<string, unkno
   }
 }
 
+/**
+ * Os oito tipos que o schema aceita. Qualquer outro vira "texto".
+ *
+ * Isso importa porque o tipo é só a APARÊNCIA do bloco (a cor da caixa, o
+ * ícone) — o conteúdo é o que vale. Quando a IA inventa um tipo que não
+ * existe ("conceito", "introducao", "resumo"), rejeitar o bloco jogava fora
+ * um parágrafo perfeitamente bom, e um único bloco assim derrubava a aula
+ * inteira. Mostrar como texto comum é a degradação honesta: o usuário lê o
+ * mesmo conteúdo, só sem o destaque visual.
+ */
+const TIPOS_CONHECIDOS = ['texto', 'dica', 'alerta', 'memorize', 'exemplo', 'palavra', 'naoconfunda', 'tabela']
+
+/** Tira tags de HTML preservando o texto — alguns modelos devolvem "html" em vez de "conteudo". */
+function textoDeHtml(v: unknown): string {
+  return comoTexto(v)
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 function normalizarBloco(b: unknown): Record<string, unknown> | null {
   if (!ehObjeto(b)) return null
   // "Não Confunda", "nao-confunda", "NAOCONFUNDA" -> "naoconfunda"
-  const tipo = comoTexto(b.tipo)
+  const tipoBruto = comoTexto(b.tipo)
     .trim()
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z]/g, '')
-  if (!tipo) return null
+  const tipo = TIPOS_CONHECIDOS.includes(tipoBruto) ? tipoBruto : 'texto'
 
   const subtopicos = comoLista(b.subtopicos)
     .map((s) =>
@@ -137,7 +164,7 @@ function normalizarBloco(b: unknown): Record<string, unknown> | null {
 
   const bloco: Record<string, unknown> = { tipo }
   const titulo = comoTexto(b.titulo).trim()
-  const conteudo = comoTexto(b.conteudo ?? b.texto).trim()
+  const conteudo = comoTexto(b.conteudo ?? b.texto).trim() || textoDeHtml(b.html)
   if (titulo) bloco.titulo = titulo
   if (conteudo) bloco.conteudo = conteudo
   if (subtopicos.length) bloco.subtopicos = subtopicos
@@ -156,6 +183,21 @@ function normalizarBloco(b: unknown): Record<string, unknown> | null {
     bloco.colunas = colunas
     bloco.linhas = linhas
   }
+
+  // Espelha exatamente a regra do schema (`BlocoIntermediateSchema.refine`):
+  // um bloco sem conteúdo suficiente pro próprio tipo reprova a aula INTEIRA
+  // lá na frente. Descartar só ele aqui salva o resto — e um bloco vazio não
+  // tem nada pra mostrar de qualquer jeito.
+  const temTabela = !!(colunas.length && linhas.length)
+  const aproveitavel =
+    tipo === 'tabela'
+      ? temTabela
+      : tipo === 'texto'
+        ? !!(titulo || conteudo || subtopicos.length)
+        : tipo === 'naoconfunda'
+          ? !!(conteudo || itens.length || temTabela)
+          : !!(conteudo || itens.length)
+  if (!aproveitavel) return null
 
   return bloco
 }
@@ -186,8 +228,15 @@ function normalizarAula(a: unknown): Record<string, unknown> | null {
 export function normalizarSaidaIA(bruto: unknown, materiaPadrao = ''): unknown {
   if (!ehObjeto(bruto)) return bruto
 
-  // A IA às vezes devolve UMA aula direto na raiz, sem o invólucro "aulas".
-  const cru = bruto.aulas === undefined && (bruto.blocos !== undefined || bruto.titulo !== undefined) ? { aulas: [bruto] } : bruto
+  // A IA às vezes devolve UMA aula só, e aí escolhe entre três formas:
+  // direto na raiz (sem invólucro), dentro de "aula" no singular, ou dentro
+  // de "aulas" como o contrato pede. As três significam a mesma coisa.
+  const cru =
+    bruto.aulas === undefined && ehObjeto(bruto.aula)
+      ? { ...bruto, aulas: [bruto.aula] }
+      : bruto.aulas === undefined && (bruto.blocos !== undefined || bruto.titulo !== undefined)
+        ? { aulas: [bruto] }
+        : bruto
 
   const aulas = comoLista(cru.aulas).map(normalizarAula).filter(Boolean)
   if (!aulas.length) return bruto
