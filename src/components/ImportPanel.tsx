@@ -160,7 +160,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
         return
       }
 
-      setEtapa('Gerando a aula com IA (pode levar até 1 minuto)…')
+      setEtapa('Gerando a aula com IA (pode levar alguns minutos)…')
       const payloads = await gerarAulaViaIA(texto, numPaginas, nomeEscolhido, file.name, perfil?.chaveGemini)
       await salvarPayloadsGerados(payloads, file.name, nomeEscolhido)
     } catch (e) {
@@ -204,7 +204,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
         nomeEscolhido ?? undefined,
         alvo.nomeArquivo,
         perfil?.chaveGemini,
-        (parte, total) => setEtapa(`Montando a aula: etapa ${parte} de ${total} (cada uma leva até 1 minuto)…`),
+        (parte, total) => setEtapa(`Montando a aula: etapa ${parte} de ${total} (cada etapa pode levar alguns minutos)…`),
       )
       await salvarPayloadsGerados(payloads, alvo.nomeArquivo, nomeEscolhido)
     } catch (e) {

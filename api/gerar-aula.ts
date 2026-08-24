@@ -167,17 +167,23 @@ type Tentativa =
   | { res: Response; provedor: 'groq'; dados: OpenAiCompatResponse }
   | { res: Response; provedor: 'openrouter'; dados: OpenAiCompatResponse }
 
-// A função tem no máximo 60s na Vercel (vercel.json) antes de ser encerrada
-// pela própria plataforma — e quando isso acontece, quem chega no navegador
-// é uma página de erro HTML da Vercel, não a nossa resposta JSON (é
-// exatamente o "resposta não veio em JSON" que aparece pro usuário).
-// Trabalhamos com uma margem menor pra sempre sobrar tempo de montar e
-// devolver a nossa própria resposta.
-const LIMITE_MS = 50_000
+// Teto de execução da função na Vercel, definido em vercel.json.
+//
+// Estava em 60s por um engano meu: 60s era o limite ANTIGO. Com o Fluid
+// Compute — padrão em projetos novos da Vercel desde abr/2025 e disponível
+// no plano Hobby — o teto é 300s. O diagnóstico de produção mostrou a
+// OpenRouter levando 45,9s e sendo cortada; com 300s ela cabe com folga.
+// Se este número mudar em vercel.json, mude aqui junto.
+const MAX_DURACAO_VERCEL_MS = 300_000
+
+// Nosso limite de trabalho, sempre abaixo do teto da plataforma pra que
+// sejamos NÓS a desistir (respondendo JSON) e não a Vercel a nos encerrar
+// (respondendo uma página HTML de erro, que o app não consegue interpretar).
+const LIMITE_MS = MAX_DURACAO_VERCEL_MS - 40_000
 
 // Reserva final garantida pra compilar/validar/serializar a resposta depois
 // que a IA responde — nenhuma chamada externa pode consumir esse naco.
-const RESERVA_RESPOSTA_MS = 4_000
+const RESERVA_RESPOSTA_MS = 10_000
 
 /** Status sintético (não vem de nenhum provedor) pra "estourou o nosso próprio teto de tempo". */
 const STATUS_TEMPO_ESGOTADO = 599
@@ -403,8 +409,10 @@ async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string, inicio: 
 const STATUS_TENTA_PROXIMO = new Set([413, 429, 503, STATUS_TEMPO_ESGOTADO])
 
 // Quanto esperamos por um provedor antes de colocar o PRÓXIMO pra trabalhar
-// em paralelo com ele. Ver `chamarComReserva`.
-const ATRASO_PARALELO_MS = 12_000
+// em paralelo com ele. Ver `chamarComReserva`. Com 300s de orçamento dá pra
+// ser paciente: um provedor bom costuma responder dentro disso, e assim
+// evitamos gastar cota de outro à toa.
+const ATRASO_PARALELO_MS = 25_000
 
 /**
  * Aciona os provedores de forma escalonada e fica com a PRIMEIRA resposta boa.
@@ -529,8 +537,8 @@ function extrairResultado(t: Tentativa): ResultadoExtraido {
 type Responder = (status: number, corpo: unknown) => void
 
 // Momento em que a rede de segurança responde de qualquer jeito. Fica abaixo
-// dos 60s de maxDuration (vercel.json) com folga pra resposta ser enviada.
-const RESPOSTA_GARANTIDA_MS = 52_000
+// do teto da plataforma com folga pra resposta ser enviada.
+const RESPOSTA_GARANTIDA_MS = MAX_DURACAO_VERCEL_MS - 20_000
 
 /**
  * Rede de segurança final contra FUNCTION_INVOCATION_TIMEOUT.
@@ -705,7 +713,7 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
         // sozinhos a tempo e explicamos o que fazer.
         responder(504, {
           ok: false,
-          error: `A IA demorou mais do que o tempo disponível para responder (o servidor tem 1 minuto por pedido). Tentativas: ${diagnostico.join(' · ')}.`,
+          error: `A IA demorou mais do que o tempo disponível para responder. Tentativas: ${diagnostico.join(' · ')}.`,
           tamanhoExcessivo: true,
         })
         return
