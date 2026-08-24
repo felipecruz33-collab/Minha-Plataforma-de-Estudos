@@ -7,12 +7,19 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
-      // Registro manual em src/main.tsx (para forçar checagem por nova versão
-      // sempre que o app volta ao primeiro plano — ver comentário lá).
+      // 'prompt' (e não 'autoUpdate') porque é o app que decide a hora de
+      // trocar de versão: recarregar sozinho no meio de uma importação de PDF
+      // ou de um simulado perderia trabalho. Ver src/lib/pwaUpdate.ts.
+      registerType: 'prompt',
+      // Registro manual em src/lib/pwaUpdate.ts (para checar por nova versão
+      // sempre que o app volta ao primeiro plano, e pra mostrar o aviso).
       injectRegister: false,
       workbox: {
-        skipWaiting: true,
+        // `skipWaiting` fica DESLIGADO de propósito. Com ele ligado, o Service
+        // Worker novo nunca passa pelo estado "em espera" — e é esse estado
+        // que dispara o aviso de versão nova. Era por isso que o app não
+        // atualizava: a versão nova assumia por baixo, mas a página aberta
+        // seguia rodando o JavaScript antigo, sem nada avisar pra recarregar.
         clientsClaim: true,
         cleanupOutdatedCaches: true,
       },
