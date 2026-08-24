@@ -362,6 +362,18 @@ export default function Perfil() {
             <dt>isPremium</dt>
             <dd className="font-mono">{String(perfil.isPremium)}</dd>
           </div>
+          <div className="flex justify-between gap-2">
+            <dt>Versão do app</dt>
+            <dd className="font-mono">
+              {new Date(__INFO_BUILD__.data).toLocaleString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}{' '}
+              · {__INFO_BUILD__.commit}
+            </dd>
+          </div>
         </dl>
       </Card>
     </div>
