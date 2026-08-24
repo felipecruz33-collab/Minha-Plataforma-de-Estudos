@@ -75,19 +75,41 @@ async function gerarAulasDoTexto(
   nomeArquivo: string,
   chaveUsuario: string | null | undefined,
 ): Promise<AulaImportPayload[]> {
-  let resposta: Response
-  try {
-    resposta = await fetch('/api/gerar-aula', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texto, materiaOverride, nomeArquivo, chaveUsuario: chaveUsuario || undefined }),
-    })
-  } catch {
-    throw new Error(
-      'Não foi possível falar com o servidor de IA. Isso só funciona no site publicado (não no ambiente local de desenvolvimento).',
-    )
+  const corpo = JSON.stringify({ texto, materiaOverride, nomeArquivo, chaveUsuario: chaveUsuario || undefined })
+
+  // Gerar uma aula é uma requisição longa (pode levar minutos), e em rede
+  // móvel uma conexão parada esse tempo todo às vezes cai antes de responder.
+  // Quando o `fetch` falha assim, o erro não diz nada de útil — é só "falhou".
+  // Então tentamos de novo algumas vezes antes de desistir: quase sempre a
+  // segunda tentativa passa, e o usuário nem percebe.
+  let ultimoErro: unknown
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    try {
+      const resposta = await fetch('/api/gerar-aula', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: corpo,
+      })
+      return await interpretarResposta(resposta, texto, numPaginas)
+    } catch (e) {
+      // Um erro que já é NOSSO (formato/tamanho) não é falha de conexão:
+      // repetir a chamada não mudaria nada, então sobe na hora.
+      if (e instanceof PdfMuitoGrandeError || e instanceof RespostaDaIAError) throw e
+      ultimoErro = e
+      if (tentativa < 3) await new Promise((r) => setTimeout(r, tentativa * 2000))
+    }
   }
 
+  console.error('gerar aula: conexão falhou nas 3 tentativas:', ultimoErro)
+  throw new Error(
+    'A conexão com o servidor de IA caiu no meio do processo (tentei 3 vezes). Isso costuma acontecer em rede instável — confira sua internet e tente de novo.',
+  )
+}
+
+/** Erro vindo da resposta do servidor (não é falha de conexão, então não adianta repetir a chamada). */
+class RespostaDaIAError extends Error {}
+
+async function interpretarResposta(resposta: Response, texto: string, numPaginas: number): Promise<AulaImportPayload[]> {
   const contentType = resposta.headers.get('content-type') ?? ''
   if (!contentType.includes('application/json')) {
     // Resposta que não é nossa — quase sempre a página de erro da própria
@@ -113,7 +135,7 @@ async function gerarAulasDoTexto(
   if (!resposta.ok || !dados.ok || !dados.payload?.length) {
     const mensagem = dados.error || 'Não foi possível gerar a aula a partir deste PDF.'
     if (dados.tamanhoExcessivo) throw new PdfMuitoGrandeError(mensagem, texto, numPaginas)
-    throw new Error(mensagem)
+    throw new RespostaDaIAError(mensagem)
   }
 
   return dados.payload

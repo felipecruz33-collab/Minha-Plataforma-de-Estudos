@@ -38,7 +38,7 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MO
 // (aqui, saída estruturada) — evita fixar um modelo `:free` específico, que
 // entra e sai de linha com frequência.
 interface ProvedorOpenAiCompat {
-  id: 'groq' | 'openrouter'
+  id: 'groq' | 'openrouter' | 'aimlapi'
   url: string
   model: string
   campoMaxTokens: 'max_completion_tokens' | 'max_tokens'
@@ -71,6 +71,20 @@ const OPENROUTER: ProvedorOpenAiCompat = {
   id: 'openrouter',
   url: 'https://openrouter.ai/api/v1/chat/completions',
   model: 'openrouter/free',
+  campoMaxTokens: 'max_tokens',
+  aceitaJsonSchema: true,
+  maxTokensSaida: 12000,
+}
+
+// AI/ML API: agregador que expõe vários modelos atrás de uma API única, no
+// mesmo formato compatível com OpenAI. O modelo vem de variável de ambiente
+// (AIMLAPI_MODEL) porque o catálogo deles é grande e muda — o padrão abaixo é
+// exatamente o que aparece no exemplo de onboarding da própria plataforma, e
+// trocar não exige mexer no código.
+const AIMLAPI: ProvedorOpenAiCompat = {
+  id: 'aimlapi',
+  url: 'https://api.aimlapi.com/v1/chat/completions',
+  model: process.env.AIMLAPI_MODEL?.trim() || 'openai/gpt-5-5',
   campoMaxTokens: 'max_tokens',
   aceitaJsonSchema: true,
   maxTokensSaida: 12000,
@@ -182,6 +196,7 @@ type Tentativa =
   | { res: Response; provedor: 'gemini'; dados: GeminiResponse }
   | { res: Response; provedor: 'groq'; dados: OpenAiCompatResponse }
   | { res: Response; provedor: 'openrouter'; dados: OpenAiCompatResponse }
+  | { res: Response; provedor: 'aimlapi'; dados: OpenAiCompatResponse }
 
 // Teto de execução da função na Vercel, definido em vercel.json.
 //
@@ -282,7 +297,7 @@ function tentativaTempoEsgotado(provedor: ProvedorConfig['provedor']): Tentativa
   const res = new Response(null, { status: STATUS_TEMPO_ESGOTADO })
   return provedor === 'gemini'
     ? { res, provedor: 'gemini', dados: {} }
-    : { res, provedor: provedor as 'groq' | 'openrouter', dados: {} }
+    : { res, provedor: provedor as 'groq' | 'openrouter' | 'aimlapi', dados: {} }
 }
 
 async function chamarGemini(apiKey: string, promptTexto: string, inicio: number): Promise<Tentativa> {
@@ -402,13 +417,14 @@ async function chamarOpenAiCompat(cfg: ProvedorOpenAiCompat, apiKey: string, pro
 }
 
 interface ProvedorConfig {
-  provedor: 'gemini' | 'groq' | 'openrouter'
+  provedor: 'gemini' | 'groq' | 'openrouter' | 'aimlapi'
   chave: string
 }
 
 async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string, inicio: number): Promise<Tentativa> {
   if (cfg.provedor === 'gemini') return chamarGemini(cfg.chave, promptTexto, inicio)
-  return chamarOpenAiCompat(cfg.provedor === 'groq' ? GROQ : OPENROUTER, cfg.chave, promptTexto, inicio)
+  const compat = cfg.provedor === 'groq' ? GROQ : cfg.provedor === 'aimlapi' ? AIMLAPI : OPENROUTER
+  return chamarOpenAiCompat(compat, cfg.chave, promptTexto, inicio)
 }
 
 // Tenta cada provedor/chave da lista em ordem, passando pro próximo quando o
@@ -426,11 +442,22 @@ async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string, inicio: 
 // rede" — também vale tentar o próximo provedor, que pode estar mais rápido.
 const STATUS_TENTA_PROXIMO = new Set([413, 429, 503, STATUS_TEMPO_ESGOTADO])
 
+/** Nome legível de cada provedor, pra mensagens de erro e diagnóstico. */
+const NOME_PROVEDOR: Record<ProvedorConfig['provedor'], string> = {
+  gemini: 'Gemini',
+  aimlapi: 'AI/ML API',
+  openrouter: 'OpenRouter',
+  groq: 'Groq',
+}
+
 // Quanto esperamos por um provedor antes de colocar o PRÓXIMO pra trabalhar
-// em paralelo com ele. Ver `chamarComReserva`. Com 300s de orçamento dá pra
-// ser paciente: um provedor bom costuma responder dentro disso, e assim
-// evitamos gastar cota de outro à toa.
-const ATRASO_PARALELO_MS = 25_000
+// em paralelo com ele. Ver `chamarComReserva`.
+//
+// 15s é o meio-termo: um provedor rápido (Groq, Gemini com cota) responde bem
+// dentro disso e nenhum outro chega a ser acionado — sem desperdício de cota.
+// Passou de 15s, é sinal de que aquele provedor está devagar, e aí compensa
+// pôr o próximo pra correr junto em vez de esperar parado.
+const ATRASO_PARALELO_MS = 15_000
 
 /**
  * Aciona os provedores de forma escalonada e fica com a PRIMEIRA resposta boa.
@@ -490,7 +517,7 @@ async function chamarComReserva(
         .then((tentativa) => {
           const segundos = ((Date.now() - antes) / 1000).toFixed(1)
           const rotulo = tentativa.res.status === STATUS_TEMPO_ESGOTADO ? 'tempo esgotado' : String(tentativa.res.status)
-          diagnostico.push(`${cfg.provedor} ${segundos}s (${rotulo})`)
+          diagnostico.push(`${NOME_PROVEDOR[cfg.provedor]} ${segundos}s (${rotulo})`)
 
           if (STATUS_TENTA_PROXIMO.has(tentativa.res.status)) {
             // Falhou de um jeito que outro provedor pode resolver: guarda como
@@ -610,12 +637,15 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
     chaveUsuario?: string
   }
 
-  // Ordem de prioridade da cascata (pedida explicitamente pelo usuário):
+  // Ordem de prioridade da cascata. Vale lembrar que hoje ela é uma ordem de
+  // LARGADA, não uma fila: quem não responde rápido ganha companhia em
+  // paralelo, e o primeiro a entregar vence (ver `chamarComReserva`).
   // 1) Gemini principal (chave própria do usuário, evitando fila
   //    compartilhada, + GEMINI_API_KEY da plataforma)
-  // 2) OpenRouter
-  // 3) Groq
-  // 4) Gemini reserva (GEMINI_API_KEY_RESERVA) — por último
+  // 2) AI/ML API
+  // 3) OpenRouter
+  // 4) Groq
+  // 5) Gemini reserva (GEMINI_API_KEY_RESERVA) — por último
   // Cada item é opcional: sem nenhuma configuração extra, o comportamento é
   // o mesmo de sempre (só a chave do usuário e/ou GEMINI_API_KEY).
   // GEMINI_API_KEY_RESERVA, GROQ_API_KEY e OPENROUTER_API_KEY aceitam mais
@@ -633,10 +663,12 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
   )
   const chavesGeminiReserva = Array.from(new Set(dividirChaves(process.env.GEMINI_API_KEY_RESERVA)))
   const chavesGroq = Array.from(new Set(dividirChaves(process.env.GROQ_API_KEY)))
+  const chavesAimlapi = Array.from(new Set(dividirChaves(process.env.AIMLAPI_API_KEY)))
   const chavesOpenRouter = Array.from(new Set(dividirChaves(process.env.OPENROUTER_API_KEY)))
 
   const provedoresBrutos: ProvedorConfig[] = [
     ...chavesGeminiPrincipal.map((chave): ProvedorConfig => ({ provedor: 'gemini', chave })),
+    ...chavesAimlapi.map((chave): ProvedorConfig => ({ provedor: 'aimlapi' as const, chave })),
     ...chavesOpenRouter.map((chave): ProvedorConfig => ({ provedor: 'openrouter' as const, chave })),
     ...chavesGroq.map((chave): ProvedorConfig => ({ provedor: 'groq' as const, chave })),
     ...chavesGeminiReserva.map((chave): ProvedorConfig => ({ provedor: 'gemini' as const, chave })),
@@ -699,7 +731,7 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
                 ? chaveUsuario
                   ? 'Cota gratuita da sua chave do Gemini esgotada por agora. Tente novamente em alguns minutos.'
                   : 'Cota gratuita compartilhada do Gemini esgotada por agora. Adicione sua própria chave grátis em "Perfil" pra não depender dela, ou tente de novo mais tarde.'
-                : `Cota gratuita do provedor de reserva (${provedorUsado.provedor === 'groq' ? 'Groq' : 'OpenRouter'}) esgotada por agora. Tente novamente mais tarde.`,
+                : `Cota do provedor de reserva (${NOME_PROVEDOR[provedorUsado.provedor]}) esgotada por agora. Tente novamente mais tarde.`,
         })
         return
       }
