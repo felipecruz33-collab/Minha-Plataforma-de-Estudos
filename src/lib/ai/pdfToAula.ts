@@ -18,28 +18,59 @@ async function extractText(file: File): Promise<string[]> {
   return pages
 }
 
+/**
+ * Junta os pedaços de texto que o pdf.js devolve com um espaço entre cada um.
+ * Como esses pedaços seguem a posição dos caracteres na página (colunas,
+ * tabulação, alinhamento justificado), isso produz sequências enormes de
+ * espaços: no PDF de 73 páginas que usei pra medir, 4.114 trechos com dois ou
+ * mais espaços seguidos.
+ *
+ * Para a IA, cada corrida dessas custa tokens sem carregar nenhuma informação
+ * — o layout da página não significa nada depois que o texto foi extraído.
+ * Colapsar cada corrida num único espaço economizou 5,5% do texto (~1.637
+ * tokens no PDF inteiro), o que se traduz direto em menos tempo de leitura e
+ * mais margem dentro do limite de contexto dos modelos gratuitos.
+ *
+ * De propósito, o corte é conservador: só espaços e tabs horizontais viram um
+ * espaço, e as quebras de linha entre páginas continuam intactas. Nada de
+ * tentar remendar palavras que o pdf.js partiu ("planejam ento") — juntar
+ * pedaços por conta própria arriscaria grudar palavras que deviam ficar
+ * separadas, e a IA lida bem com esse tipo de ruído.
+ */
+export function limparEspacos(texto: string): string {
+  return texto
+    .replace(/[ \t\u00a0]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .trim()
+}
+
 /** Extrai o texto do PDF inteiro (todas as páginas, separadas por linha em branco) e a contagem de páginas. */
 export async function extrairTextoPdf(file: File): Promise<{ texto: string; numPaginas: number }> {
   const paginas = await extractText(file)
-  return { texto: paginas.join('\n\n').trim(), numPaginas: paginas.length }
+  const texto = paginas
+    .map(limparEspacos)
+    .filter(Boolean)
+    .join('\n\n')
+  return { texto, numPaginas: paginas.length }
 }
 
-// O que limita o tamanho de cada pedaço NÃO é o quanto a IA lê, e sim o
-// quanto ela escreve: a saída sai token a token (sequencialmente, na casa de
-// ~100 por segundo), enquanto a entrada é processada de uma vez. Como o
-// prompt pede reescrita didática completa + todas as questões + explicação
-// de cada alternativa, a saída fica proporcional ao trecho enviado — e um
-// trecho grande simplesmente não termina dentro do minuto que a função
-// serverless tem por pedido.
+// Tamanho de cada pedaço, em páginas.
 //
-// Por isso os pedaços são pequenos (~6 páginas). Pedaço menor também faz a
-// Groq caber no limite de 8000 tokens/minuto do plano grátis dela — e ela é
-// de longe a mais rápida das três. Isso deixou de ter custo
-// pro usuário quando passamos a costurar tudo numa aula só no final
-// (`mesclarAulasDoMesmoPdf`): mais pedaços não viram mais aulas soltas na
-// biblioteca, viram só mais chamadas por baixo dos panos. E se ainda assim
-// um pedaço não couber, `gerarComSubdivisao` racha aquele pedaço sozinho.
-const PAGINAS_POR_PARTE = 6
+// Este número já foi de 30 -> 25 -> 10 -> 6 enquanto eu perseguia um problema
+// de tempo que, no fim, era outro (a função tinha teto de 60s por engano meu,
+// quando a plataforma permite 300s). Medindo um PDF real de 73 páginas, com 6
+// páginas por pedaço cada chamada levava só ~2.500 tokens de entrada — ou
+// seja, eu estava gastando uma viagem inteira de rede, mais a latência do
+// provedor, pra processar quase nada. Doze vezes seguidas.
+//
+// Com 300s por chamada, 15 páginas (~6 mil tokens de entrada) cabem com
+// folga e reduzem o mesmo PDF de 12 etapas para 5. Menos viagens é menos
+// latência acumulada e menos chance de algo dar errado no caminho.
+//
+// Se um pedaço ainda não couber, `gerarComSubdivisao` racha aquele pedaço
+// sozinho — então errar pra cima aqui é recuperável, errar pra baixo só
+// desperdiça tempo.
+const PAGINAS_POR_PARTE = 15
 
 // Teto de segurança bem folgado, só pra nunca fazer um número absurdo de
 // chamadas sequenciais num PDF extremamente longo — não é o critério
@@ -218,6 +249,16 @@ export async function gerarAulaViaIA(
  * como se fossem aulas de arquivos diferentes anexados juntos. Use
  * `partesRecomendadas` pra decidir quantas partes pedir.
  */
+// Quantas etapas rodam ao mesmo tempo. Cada etapa é uma requisição separada
+// à função serverless, então elas não disputam o tempo uma da outra — o que
+// disputavam era só a paciência do usuário. Em série, um PDF de 73 páginas
+// levava 12 chamadas enfileiradas; qualquer uma lenta segurava todas as
+// outras, e a página do celular precisava ficar viva o tempo todo.
+//
+// 3 é conservador de propósito: acelera bastante sem disparar os limites por
+// minuto dos tiers gratuitos (a Groq, por exemplo, tem só 8 mil tokens/min).
+const ETAPAS_SIMULTANEAS = 3
+
 export async function gerarAulaViaIADividida(
   textoCompleto: string,
   numPaginas: number,
@@ -225,16 +266,31 @@ export async function gerarAulaViaIADividida(
   materiaOverride: string | undefined,
   nomeArquivo: string,
   chaveUsuario: string | null | undefined,
-  onProgresso?: (parte: number, total: number) => void,
+  onProgresso?: (concluidas: number, total: number) => void,
 ): Promise<AulaImportPayload[]> {
   const partes = dividirTextoEmPartes(textoCompleto, numPartes)
   const paginasPorParte = Math.max(1, Math.round(numPaginas / partes.length))
 
-  const aulas: AulaImportPayload[] = []
-  for (let i = 0; i < partes.length; i++) {
-    onProgresso?.(i + 1, partes.length)
-    aulas.push(...(await gerarComSubdivisao(partes[i], paginasPorParte, materiaOverride, nomeArquivo, chaveUsuario)))
+  // Guarda por índice, não por ordem de chegada: rodando em paralelo, a etapa
+  // 5 pode terminar antes da 2, e a aula tem que sair na ordem do documento.
+  const resultados: AulaImportPayload[][] = new Array(partes.length)
+  let concluidas = 0
+  let proxima = 0
+
+  async function trabalhador() {
+    while (proxima < partes.length) {
+      const i = proxima++
+      resultados[i] = await gerarComSubdivisao(partes[i], paginasPorParte, materiaOverride, nomeArquivo, chaveUsuario)
+      onProgresso?.(++concluidas, partes.length)
+    }
   }
+
+  onProgresso?.(0, partes.length)
+  // Se qualquer etapa falhar, `Promise.all` propaga o erro — que é o
+  // comportamento certo: meia aula não serve.
+  await Promise.all(Array.from({ length: Math.min(ETAPAS_SIMULTANEAS, partes.length) }, trabalhador))
+
+  const aulas = resultados.flat()
   // Os pedaços são um detalhe interno de como driblamos o tempo limite do
   // servidor — o usuário mandou um PDF e espera uma aula, então costuramos
   // tudo de volta numa só antes de devolver.
