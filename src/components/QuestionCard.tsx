@@ -1,19 +1,38 @@
 import { Star } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAuth } from '../lib/auth/AuthContext'
 import { repo } from '../lib/repo'
-import type { Questao } from '../lib/types'
+import type { Questao, Resposta } from '../lib/types'
 import { Card } from './ui/Card'
 
 interface QuestionCardProps {
   questao: Questao
+  /**
+   * Resposta que a pessoa já tinha marcado antes, se a tela souber dela.
+   *
+   * Sem isto o cartão sempre nasce em branco — que é o certo no simulado (a
+   * graça é responder de novo) e na aula. Quem passa este dado é a tela de
+   * Questões, onde o filtro "feitas / não feitas" só faz sentido se o cartão
+   * mostrar a mesma coisa que o filtro está dizendo.
+   */
+  respostaAnterior?: Resposta | null
   onRespondida?: (correta: boolean) => void
 }
 
-export function QuestionCard({ questao, onRespondida }: QuestionCardProps) {
+export function QuestionCard({ questao, respostaAnterior, onRespondida }: QuestionCardProps) {
   const { user, perfil, toggleFavorito } = useAuth()
-  const [escolha, setEscolha] = useState<string | null>(null)
-  const [respondida, setRespondida] = useState(false)
+  const [escolha, setEscolha] = useState<string | null>(respostaAnterior?.alternativaEscolhida ?? null)
+  const [respondida, setRespondida] = useState(!!respostaAnterior)
+
+  // Só depende do id: responder aqui na hora NÃO muda `respostaAnterior` (a
+  // tela de origem não recarrega a lista a cada clique), então este efeito não
+  // dispara e não apaga o que a pessoa acabou de marcar. Ele existe pro caso
+  // contrário — "esquecer respostas" tira a marcação e o cartão precisa voltar
+  // a ficar em branco sem a tela ter que remontar tudo.
+  useEffect(() => {
+    setEscolha(respostaAnterior?.alternativaEscolhida ?? null)
+    setRespondida(!!respostaAnterior)
+  }, [respostaAnterior?.id])
 
   const favorita = perfil?.favoritos.includes(questao.id) ?? false
 

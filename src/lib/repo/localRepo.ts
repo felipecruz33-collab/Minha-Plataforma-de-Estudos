@@ -208,6 +208,17 @@ export class LocalRepository implements DataRepository {
     return nova
   }
 
+  async esquecerRespostas(userId: string, escopo: { materiaId?: string; aulaId?: string }): Promise<void> {
+    const s = load()
+    s.respostas = s.respostas.filter((r) => {
+      if (r.userId !== userId) return true
+      if (escopo.aulaId) return r.aulaId !== escopo.aulaId
+      if (escopo.materiaId) return r.materiaId !== escopo.materiaId
+      return false
+    })
+    save(s)
+  }
+
   async getPerfil(userId: string, email: string): Promise<Perfil> {
     const s = load()
     const adminEmail = ((import.meta.env.VITE_ADMIN_EMAIL as string | undefined) ?? DEFAULT_ADMIN_EMAIL).toLowerCase()
