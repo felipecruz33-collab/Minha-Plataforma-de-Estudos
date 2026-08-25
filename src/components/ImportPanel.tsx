@@ -369,8 +369,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                   ) : (
                     <>
                       Plano gratuito: resta{restantes === 1 ? '' : 'm'} <strong>{restantes}</strong> de {LIMITE_PDF_GRATIS}{' '}
-                      PDF{restantes === 1 ? '' : 's'} com IA a cada {JANELA_PDF_DIAS} dias, de até {paginasPermitidas}{' '}
-                      páginas cada.{' '}
+                      PDF{restantes === 1 ? '' : 's'} com IA a cada {JANELA_PDF_DIAS} dias.{' '}
                       <Link to="/premium" className="font-semibold underline">
                         O Premium é sem limite
                       </Link>
@@ -390,6 +389,14 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
               <FileUp className="h-8 w-8 text-slate-400" strokeWidth={1.5} />
               <span className="text-sm font-medium text-slate-600">
                 {semPdfsRestantes ? 'Limite do plano gratuito atingido' : 'Toque para escolher um PDF'}
+              </span>
+              {/* O tamanho aparece aqui, e não junto do aviso de cota, porque
+                  quem é Premium não vê aquele aviso (não tem limite de
+                  quantidade) e mesmo assim precisa saber deste. Fica curto de
+                  propósito: é uma informação, não um alerta. */}
+              <span className="text-xs text-slate-400">
+                Até {paginasPermitidas} páginas
+                {temPremium(perfil) ? ' · plano Premium' : ` no plano gratuito · ${LIMITE_PAGINAS_PREMIUM} no Premium`}
               </span>
               <input
                 type="file"
