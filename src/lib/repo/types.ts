@@ -46,6 +46,18 @@ export interface DataRepository {
 
   listRespostas(userId: string): Promise<Resposta[]>
   registrarResposta(resposta: Omit<Resposta, 'id' | 'respondidoEm'>): Promise<Resposta>
+  /**
+   * Apaga as respostas do usuário dentro de um escopo, para que as questões
+   * voltem a ficar em branco e possam ser refeitas.
+   *
+   * O escopo é sempre o mais específico que vier: `aulaId` ganha de
+   * `materiaId`, e um objeto vazio significa "todas as minhas respostas".
+   * Apagar de verdade (em vez de marcar como "esquecida") mantém uma regra só
+   * no app: o histórico É o que aconteceu. O preço é que as tentativas
+   * apagadas também saem do Desempenho, da Revisão e das Erradas — por isso a
+   * tela avisa disso antes de confirmar.
+   */
+  esquecerRespostas(userId: string, escopo: { materiaId?: string; aulaId?: string }): Promise<void>
 
   getPerfil(userId: string, email: string): Promise<Perfil>
   atualizarNome(userId: string, nome: string): Promise<Perfil>
