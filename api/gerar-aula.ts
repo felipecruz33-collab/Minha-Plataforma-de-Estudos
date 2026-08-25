@@ -4,6 +4,7 @@ import { SYSTEM_PROMPT_GERAR_AULA } from '../src/lib/aiPrompt.js'
 import { AulaGeradaSchema } from '../src/lib/aiSchema.js'
 import { compilarAulas } from '../src/lib/lessonCompiler.js'
 import { extrairJson, normalizarSaidaIA } from '../src/lib/ai/normalizarSaidaIA.js'
+import { CHARS_POR_PAGINA, JANELA_PDF_DIAS, LIMITE_PDF_GRATIS, limitePaginas } from '../src/lib/premium.js'
 
 // Texto extraído do PDF vem em base64 do cliente; ~4.4MB é o limite prático
 // de corpo de requisição em funções serverless da Vercel — fica com folga.
@@ -1140,6 +1141,103 @@ async function pingProvedor(cfg: ProvedorConfig, inicio: number): Promise<Record
   }
 }
 
+// ---------------------------------------------------------------------------
+// Quem pode usar a IA
+// ---------------------------------------------------------------------------
+//
+// Até aqui esta função respondia a QUALQUER pedido da internet. Quem
+// descobrisse o endereço podia mandar texto direto e queimar a cota de IA
+// compartilhada — a do dono do app e a dos usuários — além de passar por cima
+// do limite de PDFs, que só existia na tela.
+//
+// Agora todo pedido precisa vir com a sessão de quem está logado, e o limite é
+// conferido AQUI, no servidor. A tela continua avisando antes (é melhor pra
+// quem usa), mas quem manda é este arquivo.
+
+const SUPABASE_URL = (process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? '').replace(/\/$/, '')
+const SUPABASE_ANON = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY ?? ''
+
+export const supabaseConfigurado = Boolean(SUPABASE_URL && SUPABASE_ANON)
+
+interface Usuario {
+  id: string
+  email: string
+  isPremium: boolean
+  isAdmin: boolean
+  token: string
+}
+
+/** Cabeçalhos que fazem o Supabase agir COMO o usuário — a RLS continua valendo. */
+function comoUsuario(token: string): Record<string, string> {
+  return { apikey: SUPABASE_ANON, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+}
+
+/**
+ * Confere a sessão perguntando ao próprio Supabase quem é o dono do token.
+ *
+ * Poderia validar a assinatura do token aqui sem ir à rede, mas isso exigiria
+ * guardar o segredo do JWT numa variável a mais — mais uma coisa pra
+ * configurar e pra vazar. A ida à rede custa uns 100ms num orçamento de 300
+ * segundos, e tem a vantagem de respeitar na hora um logout ou uma conta
+ * excluída.
+ */
+async function identificarUsuario(req: VercelRequest, inicio: number): Promise<Usuario | null> {
+  const cabecalho = req.headers?.authorization ?? ''
+  const token = cabecalho.startsWith('Bearer ') ? cabecalho.slice(7).trim() : ''
+  if (!token) return null
+
+  try {
+    const { res, dados } = await postJsonComTeto<{ id?: string; email?: string }>(
+      `${SUPABASE_URL}/auth/v1/user`,
+      { method: 'GET', headers: comoUsuario(token) },
+      inicio,
+    )
+    if (!res.ok || !dados.id) return null
+
+    // O plano vem do banco, nunca do que o navegador afirma.
+    const perfil = await postJsonComTeto<{ is_premium?: boolean; is_admin?: boolean }[]>(
+      `${SUPABASE_URL}/rest/v1/profiles?id=eq.${dados.id}&select=is_premium,is_admin`,
+      { method: 'GET', headers: comoUsuario(token) },
+      inicio,
+    )
+    const linha = Array.isArray(perfil.dados) ? perfil.dados[0] : undefined
+    return {
+      id: dados.id,
+      email: dados.email ?? '',
+      isPremium: Boolean(linha?.is_premium),
+      isAdmin: Boolean(linha?.is_admin),
+      token,
+    }
+  } catch {
+    return null
+  }
+}
+
+/** Arquivos distintos que esta conta processou dentro da janela. */
+async function arquivosNaJanela(usuario: Usuario, inicio: number): Promise<string[]> {
+  const desde = new Date(Date.now() - JANELA_PDF_DIAS * 24 * 60 * 60 * 1000).toISOString()
+  const { res, dados } = await postJsonComTeto<{ arquivo: string }[]>(
+    `${SUPABASE_URL}/rest/v1/uso_ia?user_id=eq.${usuario.id}&criado_em=gte.${desde}&select=arquivo`,
+    { method: 'GET', headers: comoUsuario(usuario.token) },
+    inicio,
+  )
+  if (!res.ok || !Array.isArray(dados)) return []
+  return [...new Set(dados.map((u) => u.arquivo))]
+}
+
+/** Deixa o rastro do uso ANTES de chamar a IA — sem rastro, sem IA. */
+async function registrarUso(usuario: Usuario, arquivo: string, caracteres: number, inicio: number): Promise<void> {
+  await postJsonComTeto(
+    `${SUPABASE_URL}/rest/v1/uso_ia`,
+    {
+      method: 'POST',
+      headers: { ...comoUsuario(usuario.token), Prefer: 'return=minimal' },
+      body: JSON.stringify({ user_id: usuario.id, arquivo, caracteres }),
+    },
+    inicio,
+  )
+}
+
 /** Monta a lista de provedores na ordem de largada, a partir das variáveis de ambiente e da chave do usuário. */
 function montarProvedores(chaveUsuario: string | undefined): ProvedorConfig[] {
   // Ordem de prioridade da cascata. Vale lembrar que hoje ela é uma ordem de
@@ -1229,6 +1327,69 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
     chaveUsuario?: string
   }
 
+  if (!texto || typeof texto !== 'string' || !texto.trim()) {
+    responder(400, { ok: false, error: 'Texto do PDF vazio ou ausente.' })
+    return
+  }
+  const arquivo = (nomeArquivo ?? '').trim() || 'arquivo-sem-nome.pdf'
+
+  // --- Quem está pedindo? -------------------------------------------------
+  //
+  // Sem Supabase configurado no servidor (ambiente de desenvolvimento), segue
+  // aberto como antes: ali não há cota compartilhada nem usuários reais pra
+  // proteger, e exigir sessão só impediria o app de rodar localmente.
+  let usuario: Usuario | null = null
+  if (supabaseConfigurado) {
+    usuario = await identificarUsuario(req, inicio)
+    if (!usuario) {
+      responder(401, {
+        ok: false,
+        error: 'Entre na sua conta para usar o "PDF com IA". Se já estiver logado, saia e entre de novo.',
+      })
+      return
+    }
+
+    // --- O PDF cabe no plano? --------------------------------------------
+    //
+    // O servidor recebe texto, não o PDF, então mede por tamanho de texto — o
+    // número de páginas que o navegador manda seria fácil de falsificar por
+    // quem está justamente sendo limitado.
+    const paginasDoPlano = limitePaginas(usuario)
+    const tetoChars = paginasDoPlano * CHARS_POR_PAGINA
+    if (texto.length > tetoChars) {
+      responder(413, {
+        ok: false,
+        error: `Este PDF passa do tamanho permitido no seu plano (até ${paginasDoPlano} páginas).`,
+      })
+      return
+    }
+
+    // --- Ainda tem cota? --------------------------------------------------
+    //
+    // Conta ARQUIVOS distintos: um PDF dividido em vários trechos manda várias
+    // chamadas com o mesmo nome, e cobrar cada trecho como um PDF seria
+    // mentira. Premium e admin não têm limite.
+    if (!usuario.isPremium && !usuario.isAdmin) {
+      const arquivos = await arquivosNaJanela(usuario, inicio)
+      if (!arquivos.includes(arquivo) && arquivos.length >= LIMITE_PDF_GRATIS) {
+        responder(429, {
+          ok: false,
+          error: `Você já usou os ${LIMITE_PDF_GRATIS} PDFs dos últimos ${JANELA_PDF_DIAS} dias. Assine o Premium para converter sem limite.`,
+        })
+        return
+      }
+    }
+
+    // Rastro gravado ANTES de gastar a IA: se a geração falhar depois, o uso
+    // já contou. É o lado certo pra errar — o custo do provedor acontece na
+    // chamada, não no sucesso dela.
+    try {
+      await registrarUso(usuario, arquivo, texto.length, inicio)
+    } catch (err) {
+      console.error('gerar-aula: não foi possível registrar o uso:', err instanceof Error ? err.message : err)
+    }
+  }
+
   const provedores = montarProvedores(chaveUsuario)
   if (provedores.length === 0) {
     responder(500, {
@@ -1239,10 +1400,6 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
     return
   }
 
-  if (!texto || typeof texto !== 'string' || !texto.trim()) {
-    responder(400, { ok: false, error: 'Texto do PDF vazio ou ausente.' })
-    return
-  }
   if (texto.length > MAX_TEXTO_CHARS) {
     responder(400, {
       ok: false,

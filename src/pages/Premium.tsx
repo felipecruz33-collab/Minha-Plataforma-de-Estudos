@@ -4,7 +4,13 @@ import { Link } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { useAuth } from '../lib/auth/AuthContext'
-import { BIBLIOTECA_ABERTA_PARA_TODOS, JANELA_PDF_DIAS, LIMITE_PDF_GRATIS } from '../lib/premium'
+import {
+  BIBLIOTECA_ABERTA_PARA_TODOS,
+  JANELA_PDF_DIAS,
+  LIMITE_PAGINAS_GRATIS,
+  LIMITE_PAGINAS_PREMIUM,
+  LIMITE_PDF_GRATIS,
+} from '../lib/premium'
 import { repo, usingSupabase } from '../lib/repo'
 
 const RECURSOS = [
@@ -15,6 +21,11 @@ const RECURSOS = [
     // cada uso — por isso é ela que tem limite no plano gratuito, e não a
     // importação de .json, onde o conteúdo já vem pronto.
     nome: `PDF com IA: ${LIMITE_PDF_GRATIS} a cada ${JANELA_PDF_DIAS} dias no gratuito, sem limite no Premium`,
+    gratis: true,
+    premium: true,
+  },
+  {
+    nome: `Tamanho do PDF: até ${LIMITE_PAGINAS_GRATIS} páginas no gratuito, ${LIMITE_PAGINAS_PREMIUM} no Premium`,
     gratis: true,
     premium: true,
   },

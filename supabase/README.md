@@ -23,6 +23,7 @@ desenvolvimento/demonstração sem backend.
    - `migrations/0011_biblioteca_premium.sql`
    - `migrations/0012_admin_premium_e_exclusao.sql`
    - `migrations/0013_email_cadastrado.sql`
+   - `migrations/0014_uso_ia.sql`
 3. Copie `.env.example` para `.env.local` e preencha:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
@@ -75,3 +76,18 @@ Sem isso, o link do e-mail é recusado com "redirect_to is not allowed".
 
 O texto do e-mail fica em **Authentication → Email Templates → Reset Password**
 e pode ser traduzido para português — o Supabase manda em inglês por padrão.
+
+## Variáveis do servidor para a função de IA
+
+`api/gerar-aula.ts` agora exige sessão e confere o limite de PDFs no servidor.
+Para isso ele precisa falar com o Supabase. Na Vercel, as variáveis
+`VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` já servem — o prefixo `VITE_`
+só afeta o que vai para o navegador, e funções serverless leem qualquer
+variável do projeto.
+
+Se preferir separar, defina também `SUPABASE_URL` e `SUPABASE_ANON_KEY`; elas
+têm prioridade. **Nunca** use a `service_role` aqui: a função age em nome do
+usuário logado, e é a RLS que garante que ninguém veja o que não é seu.
+
+Sem essas variáveis, a função continua respondendo (útil em desenvolvimento),
+mas sem exigir login e sem cobrar limite.

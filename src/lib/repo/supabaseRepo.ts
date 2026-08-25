@@ -347,14 +347,18 @@ export class SupabaseRepository implements DataRepository {
   }
 
   async pdfsNoPeriodo(userId: string, desdeISO: string): Promise<string[]> {
+    // Lê `uso_ia`, não `geracoes_ia`: é a tabela que a função serverless grava
+    // ANTES de chamar a IA, e é por ela que o limite é cobrado. Contar pela
+    // outra deixaria a tela mostrando um número diferente do que o servidor
+    // aplica — e a pessoa levaria uma recusa sem entender por quê.
     const { data, error } = await this.db()
-      .from('geracoes_ia')
-      .select('nome_arquivo, criado_em')
+      .from('uso_ia')
+      .select('arquivo, criado_em')
       .eq('user_id', userId)
       .gte('criado_em', desdeISO)
     if (error) throw error
     return primeiraDataPorArquivo(
-      (data ?? []).map((g: { nome_arquivo: string; criado_em: string }) => ({ nome: g.nome_arquivo, data: g.criado_em })),
+      (data ?? []).map((u: { arquivo: string; criado_em: string }) => ({ nome: u.arquivo, data: u.criado_em })),
     )
   }
 

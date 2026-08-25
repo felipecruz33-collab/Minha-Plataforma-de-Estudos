@@ -39,6 +39,38 @@ export function inicioDaJanelaPdf(agora = new Date()): string {
   return new Date(agora.getTime() - JANELA_PDF_DIAS * DIA_MS).toISOString()
 }
 
+/**
+ * Tamanho máximo do PDF, em páginas, por plano.
+ *
+ * Existe pra impedir a volta pelo lado: com limite de 3 ARQUIVOS por semana,
+ * nada impediria alguém de juntar tudo num PDF de 800 páginas e gastar em um
+ * só o que o limite queria espalhar — e cada arquivo desses vira dezenas de
+ * chamadas de IA, que é justamente o recurso caro.
+ *
+ * 50 páginas cobrem com folga uma aula típica de curso; 200 cobrem uma
+ * apostila inteira.
+ */
+export const LIMITE_PAGINAS_GRATIS = 50
+export const LIMITE_PAGINAS_PREMIUM = 200
+
+/**
+ * Quantos caracteres o servidor aceita por página.
+ *
+ * O servidor recebe TEXTO, não o PDF — ele não tem como contar páginas, e
+ * confiar no número que o navegador manda seria confiar em quem está sendo
+ * limitado. Então a checagem do servidor é por tamanho de texto, convertida a
+ * partir do limite de páginas.
+ *
+ * Medindo o PDF real de 73 páginas do teste: 1.628 caracteres por página.
+ * 2.200 dá uma folga confortável pra PDFs mais densos que a média, sem abrir
+ * a porta pro abuso que o limite quer evitar.
+ */
+export const CHARS_POR_PAGINA = 2200
+
+export function limitePaginas(perfil: Pick<Perfil, 'isPremium' | 'isAdmin'> | null | undefined): number {
+  return temPremium(perfil) ? LIMITE_PAGINAS_PREMIUM : LIMITE_PAGINAS_GRATIS
+}
+
 export function temPremium(perfil: Pick<Perfil, 'isPremium' | 'isAdmin'> | null | undefined): boolean {
   return !!perfil?.isPremium || !!perfil?.isAdmin
 }

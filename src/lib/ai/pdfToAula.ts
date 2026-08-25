@@ -2,6 +2,14 @@ import * as pdfjsLib from 'pdfjs-dist'
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import type { AulaImportPayload } from '../types'
 import { mesclarAulasDoMesmoPdf } from './mesclarAulas'
+import { isSupabaseConfigured, supabase } from '../supabaseClient'
+
+/** Token da sessão atual, ou null no modo local (sem Supabase). */
+async function tokenDaSessao(): Promise<string | null> {
+  if (!isSupabaseConfigured || !supabase) return null
+  const { data } = await supabase.auth.getSession()
+  return data.session?.access_token ?? null
+}
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
@@ -132,9 +140,16 @@ async function gerarAulasDoTexto(
   let ultimoErro: unknown
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
     try {
+      // A sessão vai junto: a função serverless recusa quem não estiver
+      // logado, e é ela quem confere o limite de PDFs — a tela só antecipa o
+      // aviso. Ver `identificarUsuario` em api/gerar-aula.ts.
+      const cabecalhos: Record<string, string> = { 'Content-Type': 'application/json' }
+      const token = await tokenDaSessao()
+      if (token) cabecalhos.Authorization = `Bearer ${token}`
+
       const resposta = await fetch('/api/gerar-aula', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: cabecalhos,
         body: corpo,
       })
       return await interpretarResposta(resposta, texto, numPaginas)
