@@ -2,7 +2,15 @@ import { AlertTriangle, CheckCircle2, Crown, FileJson, FileUp, KeyRound, Scissor
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth/AuthContext'
-import { JANELA_PDF_DIAS, LIMITE_PDF_GRATIS, inicioDaJanelaPdf, situacaoPdf } from '../lib/premium'
+import {
+  JANELA_PDF_DIAS,
+  LIMITE_PAGINAS_PREMIUM,
+  LIMITE_PDF_GRATIS,
+  inicioDaJanelaPdf,
+  limitePaginas,
+  situacaoPdf,
+  temPremium,
+} from '../lib/premium'
 import { repo } from '../lib/repo'
 import { validateAulaImport } from '../lib/schema'
 import { MateriaPicker, resolverNomeMateria, type EscolhaMateria } from './MateriaPicker'
@@ -46,6 +54,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   const cota = usosNaJanela === null ? null : situacaoPdf(perfil, usosNaJanela)
   const restantes = cota?.restantes ?? null
   const semPdfsRestantes = restantes === 0
+  const paginasPermitidas = limitePaginas(perfil)
   const quandoRenova = cota?.renovaEm
     ? cota.renovaEm.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
     : null
@@ -181,6 +190,19 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
       const { extrairTextoPdf, gerarAulaViaIA, partesRecomendadas } = await import('../lib/ai/pdfToAula')
       const { texto, numPaginas } = await extrairTextoPdf(file)
       if (!texto) throw new Error('Não foi possível extrair texto deste PDF (pode ser um PDF escaneado sem OCR).')
+
+      // Conferido aqui pra avisar ANTES de gastar cota e minutos de espera. O
+      // servidor confere de novo por conta própria — esta checagem é
+      // conveniência, não é a tranca.
+      if (numPaginas > paginasPermitidas) {
+        setErrors([
+          `Este PDF tem ${numPaginas} páginas, e o seu plano aceita até ${paginasPermitidas}.` +
+            (temPremium(perfil)
+              ? ' Divida o arquivo em partes menores.'
+              : ` Assine o Premium para enviar PDFs de até ${LIMITE_PAGINAS_PREMIUM} páginas, ou divida o arquivo.`),
+        ])
+        return
+      }
 
       const partes = partesRecomendadas(numPaginas)
       if (partes > 1) {
@@ -347,7 +369,8 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                   ) : (
                     <>
                       Plano gratuito: resta{restantes === 1 ? '' : 'm'} <strong>{restantes}</strong> de {LIMITE_PDF_GRATIS}{' '}
-                      PDF{restantes === 1 ? '' : 's'} com IA a cada {JANELA_PDF_DIAS} dias.{' '}
+                      PDF{restantes === 1 ? '' : 's'} com IA a cada {JANELA_PDF_DIAS} dias, de até {paginasPermitidas}{' '}
+                      páginas cada.{' '}
                       <Link to="/premium" className="font-semibold underline">
                         O Premium é sem limite
                       </Link>
