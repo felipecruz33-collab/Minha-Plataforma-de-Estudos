@@ -13,6 +13,25 @@ export interface BackupData {
   perfil: Pick<Perfil, 'favoritos'>
 }
 
+/**
+ * Aula sem os blocos de conteúdo.
+ *
+ * Existe porque a tela de Questões precisa do título da aula e das questões,
+ * mas nunca mostra o conteúdo — e os blocos são de longe a parte mais pesada
+ * (um HTML por bloco, uma dúzia de blocos por aula). Carregá-los ali seria
+ * trafegar centenas de kB que a tela joga fora. Um tipo próprio, em vez de uma
+ * `Aula` com `blocos: []`, evita que alguém confie num campo vazio achando que
+ * a aula não tem conteúdo.
+ */
+export interface AulaComQuestoes {
+  id: string
+  materiaId: string
+  titulo: string
+  ordem: number | null
+  criadoEm: string
+  questoes: Questao[]
+}
+
 export interface QuestaoFiltro {
   materia?: string
   banca?: string
@@ -43,6 +62,11 @@ export interface DataRepository {
   reordenarAulas(materiaId: string, aulaIdsEmOrdem: string[]): Promise<void>
 
   listTodasAulas(userId: string, includeBiblioteca: boolean): Promise<Aula[]>
+  /**
+   * Aulas de várias matérias de uma vez, sem os blocos de conteúdo, já
+   * ordenadas dentro de cada matéria e na ordem em que as matérias vieram.
+   */
+  listAulasComQuestoes(materiaIds: string[]): Promise<AulaComQuestoes[]>
 
   listRespostas(userId: string): Promise<Resposta[]>
   registrarResposta(resposta: Omit<Resposta, 'id' | 'respondidoEm'>): Promise<Resposta>

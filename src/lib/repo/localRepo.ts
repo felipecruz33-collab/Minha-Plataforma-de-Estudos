@@ -1,7 +1,7 @@
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
 import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
-import type { BackupData, DataRepository, MateriaComContagem } from './types'
+import type { AulaComQuestoes, BackupData, DataRepository, MateriaComContagem } from './types'
 
 const STORAGE_KEY = 'mpe:v1'
 
@@ -31,6 +31,18 @@ function load(): Store {
   } catch {
     return emptyStore()
   }
+}
+
+/**
+ * Blocos na ordem do campo `ordem`, e não na ordem em que foram gravados.
+ *
+ * O repositório Supabase sempre ordenou (o banco fazia isso na consulta), mas
+ * aqui a aula voltava exatamente como tinha sido salva. Um JSON importado com
+ * os blocos fora de ordem — coisa que o schema permite, já que `ordem` é um
+ * campo à parte — aparecia embaralhado só neste repositório.
+ */
+function comBlocosEmOrdem(aula: Aula): Aula {
+  return { ...aula, blocos: [...aula.blocos].sort((a, b) => a.ordem - b.ordem) }
 }
 
 function save(store: Store) {
@@ -93,12 +105,13 @@ export class LocalRepository implements DataRepository {
 
   async listAulas(materiaId: string): Promise<Aula[]> {
     const s = load()
-    return ordenarAulas(s.aulas.filter((a) => a.materiaId === materiaId))
+    return ordenarAulas(s.aulas.filter((a) => a.materiaId === materiaId)).map(comBlocosEmOrdem)
   }
 
   async getAula(aulaId: string): Promise<Aula | null> {
     const s = load()
-    return s.aulas.find((a) => a.id === aulaId) ?? null
+    const aula = s.aulas.find((a) => a.id === aulaId)
+    return aula ? comBlocosEmOrdem(aula) : null
   }
 
   async listTodasAulas(userId: string, includeBiblioteca: boolean): Promise<Aula[]> {
@@ -193,6 +206,20 @@ export class LocalRepository implements DataRepository {
       if (p !== undefined) aula.ordem = p
     }
     save(s)
+  }
+
+  async listAulasComQuestoes(materiaIds: string[]): Promise<AulaComQuestoes[]> {
+    const s = load()
+    return materiaIds.flatMap((materiaId) =>
+      ordenarAulas(s.aulas.filter((a) => a.materiaId === materiaId)).map((a) => ({
+        id: a.id,
+        materiaId: a.materiaId,
+        titulo: a.titulo,
+        ordem: a.ordem,
+        criadoEm: a.criadoEm,
+        questoes: a.questoes,
+      })),
+    )
   }
 
   async listRespostas(userId: string): Promise<Resposta[]> {

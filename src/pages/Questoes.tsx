@@ -98,20 +98,21 @@ export default function Questoes() {
         ...minhas.map((m) => ({ id: m.id, nome: m.nome, origem: 'pessoal' as const })),
         ...biblio.map((m) => ({ id: m.id, nome: m.nome, origem: 'biblioteca' as const })),
       ])
-      // `listAulas` já devolve na ordem que a pessoa organizou na matéria;
-      // manter a chamada por matéria (em vez de uma lista geral) preserva essa
-      // ordem dentro de cada grupo, que é o que o select de aula precisa.
-      const porMateria = await Promise.all(materias.map((m) => repo.listAulas(m.id)))
+      // Uma consulta só para todas as matérias, e sem os blocos de conteúdo —
+      // esta tela mostra questões, não o texto da aula. As aulas já voltam
+      // ordenadas dentro de cada matéria, que é o que o select de aula precisa.
+      const todas = await repo.listAulasComQuestoes(materias.map((m) => m.id))
       if (cancelado) return
 
+      const materiaPorId = new Map(materias.map((m) => [m.id, m]))
       const aulas: OpcaoAula[] = []
       const questoes: QuestaoComOrigem[] = []
-      materias.forEach((m, i) => {
-        for (const aula of porMateria[i]) {
-          aulas.push({ id: aula.id, titulo: aula.titulo, materiaId: m.id })
-          for (const q of aula.questoes) questoes.push({ ...q, materiaNome: m.nome, origem: m.origem })
-        }
-      })
+      for (const aula of todas) {
+        const m = materiaPorId.get(aula.materiaId)
+        if (!m) continue
+        aulas.push({ id: aula.id, titulo: aula.titulo, materiaId: m.id })
+        for (const q of aula.questoes) questoes.push({ ...q, materiaNome: m.nome, origem: m.origem })
+      }
 
       setDados({ materias, aulas, questoes })
       setRespostas(resps)
