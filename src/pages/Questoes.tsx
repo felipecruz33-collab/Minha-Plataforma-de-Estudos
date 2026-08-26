@@ -1,9 +1,11 @@
 import { BookOpenCheck, Eraser, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { QuestionCard } from '../components/QuestionCard'
+import { CarregarMais } from '../components/ui/CarregarMais'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAuth } from '../lib/auth/AuthContext'
+import { useListaVisivel } from '../lib/hooks/useListaVisivel'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo, type MateriaComContagem } from '../lib/repo'
 import type { Questao, Resposta } from '../lib/types'
@@ -157,6 +159,8 @@ export default function Questoes() {
       return true
     })
   }, [questoes, respostaPorQuestao, busca, materiaId, aulaId, situacao, banca, ano, assunto])
+
+  const { visiveis, total, temMais, verMais } = useListaVisivel(filtradas)
 
   const temFiltro = Boolean(busca.trim() || materiaId || aulaId || situacao || banca || ano || assunto)
 
@@ -320,7 +324,7 @@ export default function Questoes() {
         />
       ) : (
         <div className="space-y-3">
-          {filtradas.map((q) => (
+          {visiveis.map((q) => (
             <div key={q.id} className="relative">
               <span
                 className={`absolute right-4 top-4 z-10 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
@@ -332,6 +336,7 @@ export default function Questoes() {
               <QuestionCard questao={q} respostaAnterior={respostaPorQuestao.get(q.id) ?? null} />
             </div>
           ))}
+          <CarregarMais mostrando={visiveis.length} total={total} temMais={temMais} onVerMais={verMais} />
         </div>
       )}
 

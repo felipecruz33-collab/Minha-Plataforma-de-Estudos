@@ -333,6 +333,7 @@ export class LocalRepository implements DataRepository {
     return {
       versao: 1,
       exportadoEm: new Date().toISOString(),
+      escopo: 'pessoal',
       materias,
       aulas,
       respostas,
@@ -340,13 +341,37 @@ export class LocalRepository implements DataRepository {
     }
   }
 
-  async importBackup(userId: string, data: BackupData): Promise<void> {
+  async exportBiblioteca(): Promise<BackupData> {
     const s = load()
+    const materias = s.materias.filter((m) => m.isBiblioteca)
+    const materiaIds = new Set(materias.map((m) => m.id))
+    return {
+      versao: 1,
+      exportadoEm: new Date().toISOString(),
+      escopo: 'biblioteca',
+      materias,
+      aulas: s.aulas.filter((a) => materiaIds.has(a.materiaId)),
+      respostas: [],
+      perfil: { favoritos: [] },
+    }
+  }
+
+  async importBackup(userId: string, data: BackupData, opts: { paraBiblioteca?: boolean } = {}): Promise<void> {
+    const s = load()
+    const paraBiblioteca = !!opts.paraBiblioteca
     const idMap = new Map<string, string>()
     for (const m of data.materias) {
       const newId = id()
       idMap.set(m.id, newId)
-      s.materias.push({ ...m, id: newId, userId })
+      // Matéria da biblioteca não tem dono: `user_id` nulo é o que a restrição
+      // `materia_dono` do banco exige, e o que separa "conteúdo da plataforma"
+      // de "conteúdo de uma pessoa".
+      s.materias.push({
+        ...m,
+        id: newId,
+        userId: paraBiblioteca ? null : userId,
+        isBiblioteca: paraBiblioteca,
+      })
     }
     for (const a of data.aulas) {
       const newMateriaId = idMap.get(a.materiaId)

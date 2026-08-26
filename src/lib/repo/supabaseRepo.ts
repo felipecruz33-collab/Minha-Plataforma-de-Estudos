@@ -482,10 +482,34 @@ export class SupabaseRepository implements DataRepository {
     const aulas = (await Promise.all(materias.map((m) => this.listAulas(m.id)))).flat()
     const respostas = await this.listRespostas(userId)
     const perfil = await this.getPerfil(userId, '')
-    return { versao: 1, exportadoEm: new Date().toISOString(), materias, aulas, respostas, perfil: { favoritos: perfil.favoritos } }
+    return {
+      versao: 1,
+      exportadoEm: new Date().toISOString(),
+      escopo: 'pessoal',
+      materias,
+      aulas,
+      respostas,
+      perfil: { favoritos: perfil.favoritos },
+    }
   }
 
-  async importBackup(userId: string, data: BackupData): Promise<void> {
+  async exportBiblioteca(): Promise<BackupData> {
+    const materias = await this.listBiblioteca()
+    const aulas = (await Promise.all(materias.map((m) => this.listAulas(m.id)))).flat()
+    return {
+      versao: 1,
+      exportadoEm: new Date().toISOString(),
+      escopo: 'biblioteca',
+      materias,
+      aulas,
+      // A biblioteca é conteúdo, não histórico: respostas e favoritos são de
+      // cada pessoa e continuam nos backups pessoais.
+      respostas: [],
+      perfil: { favoritos: [] },
+    }
+  }
+
+  async importBackup(userId: string, data: BackupData, opts: { paraBiblioteca?: boolean } = {}): Promise<void> {
     for (const materia of data.materias) {
       const aulasDaMateria = data.aulas.filter((a) => a.materiaId === materia.id)
       for (const aula of aulasDaMateria) {
@@ -509,7 +533,7 @@ export class SupabaseRepository implements DataRepository {
               })),
             },
           },
-          { isBiblioteca: false },
+          { isBiblioteca: !!opts.paraBiblioteca },
         )
       }
     }
