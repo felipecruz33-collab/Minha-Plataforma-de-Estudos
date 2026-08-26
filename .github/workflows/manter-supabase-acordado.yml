@@ -1,13 +1,19 @@
 # Mantém o projeto Supabase fora da pausa por inatividade.
 #
-# Um projeto no plano gratuito pausa depois de cerca de uma semana SEM NENHUMA
-# requisição. Pausar não apaga nada — dá pra restaurar pelo painel — mas o app
-# fica fora do ar até alguém perceber e clicar no botão.
+# COMO A PAUSA FUNCIONA, E O QUE ESTE ROBÔ PODE (E NÃO PODE) FAZER
+#
+# Um projeto no plano gratuito pausa depois de um tempo SEM NENHUMA
+# requisição. Depois de pausado, NENHUM acesso de fora acorda o projeto —
+# restaurar exige um clique no painel do Supabase. Não adianta o robô insistir
+# contra um projeto já pausado.
+#
+# Ou seja: o trabalho dele é PREVENIR, e é por isso que ele roda todo dia em
+# vez de esperar a pausa chegar perto. Se mesmo assim algo der errado, o aviso
+# alto é o caminho certo — porque só uma pessoa consegue clicar em restaurar.
 #
 # Com usuários de verdade entrando todo dia isso nunca acontece. O risco é
 # justamente a fase de antes do lançamento, quando o app pode passar semanas
-# sem ninguém abrir. Este robô faz uma consulta boba a cada dois dias e resolve
-# isso de graça.
+# sem ninguém abrir.
 #
 # CONFIGURAÇÃO (uma vez): em Settings → Secrets and variables → Actions do
 # repositório, crie dois segredos:
@@ -15,61 +21,122 @@
 #   SUPABASE_URL       https://xxxxxxxx.supabase.co
 #   SUPABASE_ANON_KEY  a chave "anon public" (Settings → API do Supabase)
 #
-# É a chave ANÔNIMA, a mesma que já vai no app e é pública por natureza — NUNCA
-# a `service_role`, que ignora todas as regras de segurança do banco.
+# É a chave ANÔNIMA, a mesma que já vai no app e é pública por natureza —
+# NUNCA a `service_role`, que ignora todas as regras de segurança do banco.
 #
 # Por que segredo, se a chave é pública? Porque este repositório é público, e
-# não deixar chave nenhuma no código evita que um dia a errada seja colada aqui
-# por engano.
+# não deixar chave nenhuma no código evita que um dia a errada seja colada
+# aqui por engano.
 
 name: Manter Supabase acordado
 
 on:
   schedule:
-    # 09:12 UTC, dias ímpares. O horário quebrado é de propósito: no minuto
-    # cheio o GitHub tem fila e atrasa mais.
-    - cron: '12 9 1-31/2 * *'
+    # Todo dia, 09:12 UTC. Diário e não a cada dois dias porque uma falha de
+    # rede isolada não pode consumir metade da margem até a pausa. O horário
+    # quebrado é de propósito: no minuto cheio o GitHub tem fila e atrasa.
+    - cron: '12 9 * * *'
   workflow_dispatch: {}
+
+# Duas execuções ao mesmo tempo não ajudam em nada — a segunda só polui o
+# histórico e dificulta ver o que aconteceu.
+concurrency:
+  group: manter-supabase-acordado
+  cancel-in-progress: false
 
 jobs:
   ping:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Consultar o banco
+      - name: Acordar o banco
         env:
           URL: ${{ secrets.SUPABASE_URL }}
           CHAVE: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           if [ -z "${URL}" ] || [ -z "${CHAVE}" ]; then
-            echo "::error::Faltam os segredos SUPABASE_URL e SUPABASE_ANON_KEY."
-            echo "Veja as instruções no topo deste arquivo."
+            echo "::error title=Falta configurar::Crie os segredos SUPABASE_URL e SUPABASE_ANON_KEY em Settings → Secrets and variables → Actions."
             exit 1
           fi
 
-          # Uma consulta de verdade, não só um ping no servidor web: sem sessão
-          # a RLS devolve zero linhas, mas o banco é acordado do mesmo jeito —
-          # que é exatamente o objetivo.
-          codigo=$(curl -sS -o /tmp/resposta.txt -w '%{http_code}' \
-            --max-time 30 --retry 3 --retry-delay 10 --retry-connrefused \
-            -H "apikey: ${CHAVE}" \
-            -H "Authorization: Bearer ${CHAVE}" \
-            "${URL%/}/rest/v1/profiles?select=id&limit=1")
+          base="${URL%/}"
 
-          echo "Resposta HTTP: ${codigo}"
+          # Duas portas de entrada diferentes do mesmo projeto. A primeira é a
+          # que interessa (ela chega ao BANCO); a segunda é uma segunda chance
+          # caso a API de dados esteja momentaneamente ruim, e ainda assim
+          # registra tráfego no projeto.
+          alvos=(
+            "REST/banco|${base}/rest/v1/profiles?select=id&limit=1"
+            "Auth|${base}/auth/v1/health"
+          )
 
-          # 200 (consulta feita, lista vazia por causa da RLS) e 401/403 (a
-          # chave chegou, o banco respondeu, a RLS recusou) valem como acordado.
-          # O que NÃO vale é 5xx ou não responder: aí o projeto está pausado ou
-          # com problema, e é disso que você precisa saber.
-          case "${codigo}" in
-            200|401|403)
-              echo "Projeto acordado."
-              ;;
-            *)
-              echo "::error::O Supabase respondeu ${codigo} — o projeto pode estar pausado. Abra o painel."
-              cat /tmp/resposta.txt || true
-              exit 1
-              ;;
-          esac
+          # Tentativas espaçadas: 0s, 30s, 2min, 5min. Uma instabilidade de
+          # rede de alguns minutos deixa de virar e-mail à toa.
+          #
+          # Não vale insistir por mais tempo que isto: contra um projeto já
+          # pausado nenhuma tentativa funciona, e contra uma queda passageira
+          # quem tenta de novo é a execução de AMANHÃ. Com a margem de dias até
+          # a pausa e uma rodada por dia, são várias chances antes de qualquer
+          # risco real — o laço externo é o calendário, não este `for`.
+          esperas=(0 30 120 300)
+
+          acordou=0
+          resumo=""
+
+          for espera in "${esperas[@]}"; do
+            if [ "${espera}" -gt 0 ]; then
+              echo "Aguardando ${espera}s antes de tentar de novo…"
+              sleep "${espera}"
+            fi
+
+            for alvo in "${alvos[@]}"; do
+              nome="${alvo%%|*}"
+              endereco="${alvo#*|}"
+
+              codigo=$(curl -sS -o /tmp/resposta.txt -w '%{http_code}' \
+                --max-time 30 \
+                -H "apikey: ${CHAVE}" \
+                -H "Authorization: Bearer ${CHAVE}" \
+                "${endereco}" || echo "000")
+
+              echo "  ${nome}: HTTP ${codigo}"
+              resumo="${resumo}${nome}=${codigo} "
+
+              # 200 = consulta feita (a lista vem vazia por causa da RLS, o que
+              # é o esperado sem sessão). 401/403 = a chave chegou, o projeto
+              # respondeu, a RLS recusou. Nos dois casos o projeto está no ar,
+              # que é tudo o que importa aqui.
+              case "${codigo}" in
+                200|401|403)
+                  acordou=1
+                  echo "Projeto no ar (${nome} respondeu ${codigo})."
+                  break 2
+                  ;;
+              esac
+            done
+          done
+
+          if [ "${acordou}" = "1" ]; then
+            echo "### ✅ Supabase acordado" >> "${GITHUB_STEP_SUMMARY}"
+            echo "Respostas: \`${resumo}\`" >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          # Chegou aqui: quatro rodadas ao longo de ~8 minutos, nas duas portas
+          # de entrada, e nada. Amanhã tenta de novo sozinho; o aviso existe
+          # porque, se o projeto pausou, só um clique no painel resolve —
+          # nenhuma tentativa automática acorda um projeto pausado.
+          {
+            echo "### ❌ O Supabase não respondeu"
+            echo ""
+            echo "Quatro tentativas em ~8 minutos, em duas portas de entrada: \`${resumo}\`"
+            echo ""
+            echo "**O que fazer:** abra o painel do Supabase. Se o projeto estiver pausado,"
+            echo "clique em restaurar — nenhuma tentativa automática consegue acordá-lo daqui."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          echo "::error title=Supabase fora do ar::Sem resposta em ~8 minutos (${resumo}). Abra o painel: se estiver pausado, só o clique em restaurar resolve."
+          cat /tmp/resposta.txt || true
+          exit 1
