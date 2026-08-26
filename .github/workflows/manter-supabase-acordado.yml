@@ -95,11 +95,13 @@ jobs:
               nome="${alvo%%|*}"
               endereco="${alvo#*|}"
 
+              : > /tmp/resposta.txt
               codigo=$(curl -sS -o /tmp/resposta.txt -w '%{http_code}' \
                 --max-time 30 \
                 -H "apikey: ${CHAVE}" \
                 -H "Authorization: Bearer ${CHAVE}" \
-                "${endereco}" || echo "000")
+                "${endereco}") || true
+              codigo="${codigo:-000}"
 
               echo "  ${nome}: HTTP ${codigo}"
               resumo="${resumo}${nome}=${codigo} "
@@ -138,5 +140,8 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
           echo "::error title=Supabase fora do ar::Sem resposta em ~8 minutos (${resumo}). Abra o painel: se estiver pausado, só o clique em restaurar resolve."
-          cat /tmp/resposta.txt || true
+          if [ -s /tmp/resposta.txt ]; then
+            echo "Última resposta recebida:"
+            cat /tmp/resposta.txt
+          fi
           exit 1
