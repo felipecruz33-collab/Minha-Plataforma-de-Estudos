@@ -2,7 +2,24 @@ import { supabase } from '../supabaseClient'
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
 import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
-import type { BackupData, DataRepository, MateriaComContagem } from './types'
+import type { AulaComQuestoes, BackupData, DataRepository, MateriaComContagem } from './types'
+
+function questaoDaLinha(q: any): Questao {
+  return {
+    id: q.id,
+    aulaId: q.aula_id,
+    materiaId: q.materia_id,
+    tema: q.tema,
+    banca: q.banca,
+    ano: q.ano,
+    orgao: q.orgao,
+    enunciado: q.enunciado,
+    alternativas: q.alternativas,
+    gabarito: q.gabarito,
+    explicacao: q.explicacao,
+    altExp: q.alt_exp,
+  }
+}
 
 /**
  * Repositório Supabase — espelha o schema em supabase/migrations/*.sql.
@@ -71,13 +88,23 @@ export class SupabaseRepository implements DataRepository {
     if (error) throw error
   }
 
-  private async hydrateAula(row: any): Promise<Aula> {
-    const [{ data: blocos, error: e1 }, { data: questoes, error: e2 }] = await Promise.all([
-      this.db().from('blocos').select('*').eq('aula_id', row.id).order('ordem', { ascending: true }),
-      this.db().from('questoes').select('*').eq('aula_id', row.id),
-    ])
-    if (e1) throw e1
-    if (e2) throw e2
+  /**
+   * Aula com blocos e questões numa requisição só.
+   *
+   * O PostgREST resolve o aninhamento no próprio banco, seguindo as chaves
+   * estrangeiras. Antes cada aula custava duas requisições extras (uma pros
+   * blocos, uma pras questões), então abrir uma matéria com 20 aulas eram 41
+   * idas ao servidor em vez de 1 — e cada ida paga latência de rede e uma
+   * avaliação de RLS por conta própria.
+   */
+  private static readonly AULA_COMPLETA = '*, blocos(*), questoes(*)'
+
+  /** Só o que a tela de Questões precisa: sem os blocos, que são o texto pesado. */
+  private static readonly AULA_SO_QUESTOES = 'id, materia_id, titulo, ordem, criado_em, questoes(*)'
+
+  private montarAula(row: any): Aula {
+    const blocos: any[] = row.blocos ?? []
+    const questoes: any[] = row.questoes ?? []
     return {
       id: row.id,
       materiaId: row.materia_id,
@@ -85,49 +112,89 @@ export class SupabaseRepository implements DataRepository {
       ordem: row.ordem ?? null,
       criadoEm: row.criado_em,
       atualizadoEm: row.atualizado_em,
-      blocos: (blocos ?? []).map((b: any) => ({ tipo: b.tipo, ordem: b.ordem, html: b.html }) as Bloco),
-      questoes: (questoes ?? []).map(
-        (q: any) =>
-          ({
-            id: q.id,
-            aulaId: q.aula_id,
-            materiaId: q.materia_id,
-            tema: q.tema,
-            banca: q.banca,
-            ano: q.ano,
-            orgao: q.orgao,
-            enunciado: q.enunciado,
-            alternativas: q.alternativas,
-            gabarito: q.gabarito,
-            explicacao: q.explicacao,
-            altExp: q.alt_exp,
-          }) as Questao,
-      ),
+      // A ordem vinha do `order` da consulta; agora que os blocos chegam
+      // aninhados, ordenar aqui é o que garante que continue igual.
+      blocos: [...blocos]
+        .sort((a, b) => a.ordem - b.ordem)
+        .map((b: any) => ({ tipo: b.tipo, ordem: b.ordem, html: b.html }) as Bloco),
+      questoes: questoes.map(questaoDaLinha),
     }
   }
 
   async listAulas(materiaId: string): Promise<Aula[]> {
-    const { data, error } = await this.db().from('aulas').select('*').eq('materia_id', materiaId)
+    const { data, error } = await this.db()
+      .from('aulas')
+      .select(SupabaseRepository.AULA_COMPLETA)
+      .eq('materia_id', materiaId)
     if (error) throw error
     // A ordenação é feita aqui (e não no banco) pra ser exatamente a mesma
     // regra dos dois repositórios — inclusive o desempate entre aulas
     // organizadas e nunca organizadas.
-    return ordenarAulas(await Promise.all((data ?? []).map((row) => this.hydrateAula(row))))
+    return ordenarAulas((data ?? []).map((row) => this.montarAula(row)))
   }
 
   async getAula(aulaId: string): Promise<Aula | null> {
-    const { data, error } = await this.db().from('aulas').select('*').eq('id', aulaId).maybeSingle()
+    const { data, error } = await this.db()
+      .from('aulas')
+      .select(SupabaseRepository.AULA_COMPLETA)
+      .eq('id', aulaId)
+      .maybeSingle()
     if (error) throw error
     if (!data) return null
-    return this.hydrateAula(data)
+    return this.montarAula(data)
+  }
+
+  /**
+   * Busca as aulas de várias matérias de uma vez.
+   *
+   * Em lotes porque o filtro `in` viaja na URL: com centenas de matérias a
+   * requisição estouraria o limite de tamanho do endereço e falharia — de um
+   * jeito difícil de diagnosticar, porque só aconteceria com quem tem muito
+   * conteúdo.
+   */
+  private async aulasDeMaterias(materiaIds: string[], colunas: string): Promise<any[]> {
+    const LOTE = 50
+    const lotes: string[][] = []
+    for (let i = 0; i < materiaIds.length; i += LOTE) lotes.push(materiaIds.slice(i, i + LOTE))
+
+    const respostas = await Promise.all(
+      lotes.map((ids) => this.db().from('aulas').select(colunas).in('materia_id', ids)),
+    )
+    const falha = respostas.find((r) => r.error)
+    if (falha?.error) throw falha.error
+    return respostas.flatMap((r) => (r.data ?? []) as any[])
   }
 
   async listTodasAulas(userId: string, includeBiblioteca: boolean): Promise<Aula[]> {
     const materias = includeBiblioteca
       ? [...(await this.listMaterias(userId)), ...(await this.listBiblioteca())]
       : await this.listMaterias(userId)
-    const aulasPorMateria = await Promise.all(materias.map((m) => this.listAulas(m.id)))
-    return aulasPorMateria.flat()
+    const linhas = await this.aulasDeMaterias(
+      materias.map((m) => m.id),
+      SupabaseRepository.AULA_COMPLETA,
+    )
+    return linhas.map((row) => this.montarAula(row))
+  }
+
+  async listAulasComQuestoes(materiaIds: string[]): Promise<AulaComQuestoes[]> {
+    const linhas = await this.aulasDeMaterias(materiaIds, SupabaseRepository.AULA_SO_QUESTOES)
+    const porMateria = new Map<string, AulaComQuestoes[]>()
+    for (const row of linhas) {
+      const aula: AulaComQuestoes = {
+        id: row.id,
+        materiaId: row.materia_id,
+        titulo: row.titulo,
+        ordem: row.ordem ?? null,
+        criadoEm: row.criado_em,
+        questoes: (row.questoes ?? []).map((q: any) => questaoDaLinha(q)),
+      }
+      const lista = porMateria.get(aula.materiaId)
+      if (lista) lista.push(aula)
+      else porMateria.set(aula.materiaId, [aula])
+    }
+    // Cada matéria ordenada por conta própria, na ordem em que as matérias
+    // foram pedidas — é assim que a tela espera montar o segundo select.
+    return materiaIds.flatMap((id) => ordenarAulas(porMateria.get(id) ?? []))
   }
 
   async upsertAula(userId: string, payload: AulaImportPayload, opts: { isBiblioteca: boolean }): Promise<Aula> {
@@ -192,7 +259,14 @@ export class SupabaseRepository implements DataRepository {
       if (error) throw error
     }
 
-    return this.hydrateAula(aula)
+    return this.aulaObrigatoria(aula.id)
+  }
+
+  /** Relê a aula inteira (com blocos e questões) depois de gravar. */
+  private async aulaObrigatoria(aulaId: string): Promise<Aula> {
+    const aula = await this.getAula(aulaId)
+    if (!aula) throw new Error('A aula foi salva mas não pôde ser lida de volta.')
+    return aula
   }
 
   async deleteAula(aulaId: string): Promise<void> {
@@ -201,9 +275,9 @@ export class SupabaseRepository implements DataRepository {
   }
 
   async renomearAula(aulaId: string, titulo: string): Promise<Aula> {
-    const { data, error } = await this.db().from('aulas').update({ titulo }).eq('id', aulaId).select().single()
+    const { error } = await this.db().from('aulas').update({ titulo }).eq('id', aulaId)
     if (error) throw error
-    return this.hydrateAula(data)
+    return this.aulaObrigatoria(aulaId)
   }
 
   async reordenarAulas(materiaId: string, aulaIdsEmOrdem: string[]): Promise<void> {
