@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../premium'
-import { repo, type MateriaComContagem } from '../repo'
-import type { Aula, Questao } from '../types'
+import { repo, type AulaComQuestoes, type MateriaComContagem } from '../repo'
+import type { Questao } from '../types'
 
-/** Carrega todas as aulas visíveis ao usuário (próprias + biblioteca, se liberado) e indexa as questões. */
+/**
+ * Carrega todas as aulas visíveis ao usuário (próprias + biblioteca, se
+ * liberado) e indexa as questões.
+ *
+ * Sem os blocos de conteúdo: quem usa este hook — Erradas, Favoritos, Revisão
+ * — mostra questões, nunca o texto da aula. Os blocos são a parte pesada do
+ * tráfego, e eram baixados só pra serem descartados.
+ */
 export function useTodasQuestoes() {
   const { user, perfil } = useAuth()
-  const [aulas, setAulas] = useState<Aula[]>([])
+  const [aulas, setAulas] = useState<AulaComQuestoes[]>([])
   const [materias, setMaterias] = useState<MateriaComContagem[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -19,8 +26,8 @@ export function useTodasQuestoes() {
       .then(async ([minhas, biblio]) => {
         const todasMaterias = [...minhas, ...biblio]
         setMaterias(todasMaterias)
-        const todasAulas = (await Promise.all(todasMaterias.map((m) => repo.listAulas(m.id)))).flat()
-        setAulas(todasAulas)
+        // Uma consulta só, em vez de uma por matéria.
+        setAulas(await repo.listAulasComQuestoes(todasMaterias.map((m) => m.id)))
       })
       .finally(() => setLoading(false))
   }, [user, perfil?.isPremium, perfil?.isAdmin])

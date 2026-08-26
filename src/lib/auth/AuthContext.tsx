@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { repo } from '../repo'
+import { cacheDoRepo, repo } from '../repo'
 import { isSupabaseConfigured, supabase } from '../supabaseClient'
 import type { Perfil } from '../types'
 import * as localAuth from './localAuth'
@@ -138,6 +138,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setUser(null)
     setPerfil(null)
+    // As leituras guardadas são da conta que acabou de sair — não servem pra
+    // ninguém e não devem sobrar na memória da próxima que entrar.
+    cacheDoRepo.limpar()
   }, [])
 
   const refreshPerfil = useCallback(async () => {
