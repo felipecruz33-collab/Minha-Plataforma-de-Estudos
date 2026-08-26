@@ -1,0 +1,75 @@
+# Mantém o projeto Supabase fora da pausa por inatividade.
+#
+# Um projeto no plano gratuito pausa depois de cerca de uma semana SEM NENHUMA
+# requisição. Pausar não apaga nada — dá pra restaurar pelo painel — mas o app
+# fica fora do ar até alguém perceber e clicar no botão.
+#
+# Com usuários de verdade entrando todo dia isso nunca acontece. O risco é
+# justamente a fase de antes do lançamento, quando o app pode passar semanas
+# sem ninguém abrir. Este robô faz uma consulta boba a cada dois dias e resolve
+# isso de graça.
+#
+# CONFIGURAÇÃO (uma vez): em Settings → Secrets and variables → Actions do
+# repositório, crie dois segredos:
+#
+#   SUPABASE_URL       https://xxxxxxxx.supabase.co
+#   SUPABASE_ANON_KEY  a chave "anon public" (Settings → API do Supabase)
+#
+# É a chave ANÔNIMA, a mesma que já vai no app e é pública por natureza — NUNCA
+# a `service_role`, que ignora todas as regras de segurança do banco.
+#
+# Por que segredo, se a chave é pública? Porque este repositório é público, e
+# não deixar chave nenhuma no código evita que um dia a errada seja colada aqui
+# por engano.
+
+name: Manter Supabase acordado
+
+on:
+  schedule:
+    # 09:12 UTC, dias ímpares. O horário quebrado é de propósito: no minuto
+    # cheio o GitHub tem fila e atrasa mais.
+    - cron: '12 9 1-31/2 * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Consultar o banco
+        env:
+          URL: ${{ secrets.SUPABASE_URL }}
+          CHAVE: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${URL}" ] || [ -z "${CHAVE}" ]; then
+            echo "::error::Faltam os segredos SUPABASE_URL e SUPABASE_ANON_KEY."
+            echo "Veja as instruções no topo deste arquivo."
+            exit 1
+          fi
+
+          # Uma consulta de verdade, não só um ping no servidor web: sem sessão
+          # a RLS devolve zero linhas, mas o banco é acordado do mesmo jeito —
+          # que é exatamente o objetivo.
+          codigo=$(curl -sS -o /tmp/resposta.txt -w '%{http_code}' \
+            --max-time 30 --retry 3 --retry-delay 10 --retry-connrefused \
+            -H "apikey: ${CHAVE}" \
+            -H "Authorization: Bearer ${CHAVE}" \
+            "${URL%/}/rest/v1/profiles?select=id&limit=1")
+
+          echo "Resposta HTTP: ${codigo}"
+
+          # 200 (consulta feita, lista vazia por causa da RLS) e 401/403 (a
+          # chave chegou, o banco respondeu, a RLS recusou) valem como acordado.
+          # O que NÃO vale é 5xx ou não responder: aí o projeto está pausado ou
+          # com problema, e é disso que você precisa saber.
+          case "${codigo}" in
+            200|401|403)
+              echo "Projeto acordado."
+              ;;
+            *)
+              echo "::error::O Supabase respondeu ${codigo} — o projeto pode estar pausado. Abra o painel."
+              cat /tmp/resposta.txt || true
+              exit 1
+              ;;
+          esac

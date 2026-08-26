@@ -1,8 +1,10 @@
 import { XCircle } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { QuestionCard } from '../components/QuestionCard'
+import { CarregarMais } from '../components/ui/CarregarMais'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAuth } from '../lib/auth/AuthContext'
+import { useListaVisivel } from '../lib/hooks/useListaVisivel'
 import { useTodasQuestoes } from '../lib/hooks/useTodasQuestoes'
 import { repo } from '../lib/repo'
 import type { Resposta } from '../lib/types'
@@ -17,28 +19,42 @@ export default function Erradas() {
     repo.listRespostas(user.id).then(setRespostas)
   }, [user])
 
+  // Calculado antes de qualquer saída antecipada: um hook não pode ficar
+  // depois de um `return`, e o `useMemo` é o que dá à lista uma identidade
+  // estável — sem ela o "carregar mais" nunca sairia da primeira página.
+  const erradas = useMemo(() => {
+    if (!respostas) return []
+    const ultimaPorQuestao = new Map<string, Resposta>()
+    for (const r of respostas) {
+      const atual = ultimaPorQuestao.get(r.questaoId)
+      if (!atual || r.respondidoEm > atual.respondidoEm) ultimaPorQuestao.set(r.questaoId, r)
+    }
+    return Array.from(ultimaPorQuestao.values())
+      .filter((r) => !r.correta)
+      .map((r) => questaoPorId.get(r.questaoId))
+      .filter((q): q is NonNullable<typeof q> => !!q)
+  }, [respostas, questaoPorId])
+
+  const { visiveis, total, temMais, verMais } = useListaVisivel(erradas)
+
   if (loading || respostas === null) return <p className="text-sm text-slate-400">Carregando…</p>
 
-  const ultimaPorQuestao = new Map<string, Resposta>()
-  for (const r of respostas) {
-    const atual = ultimaPorQuestao.get(r.questaoId)
-    if (!atual || r.respondidoEm > atual.respondidoEm) ultimaPorQuestao.set(r.questaoId, r)
-  }
-
-  const erradas = Array.from(ultimaPorQuestao.values())
-    .filter((r) => !r.correta)
-    .map((r) => questaoPorId.get(r.questaoId))
-    .filter((q): q is NonNullable<typeof q> => !!q)
-
   if (erradas.length === 0) {
-    return <EmptyState icon={XCircle} title="Nenhuma questão errada por aqui" description="Continue assim! Questões que você errar por último aparecem nesta lista para revisão." />
+    return (
+      <EmptyState
+        icon={XCircle}
+        title="Nenhuma questão errada por aqui"
+        description="Continue assim! Questões que você errar por último aparecem nesta lista para revisão."
+      />
+    )
   }
 
   return (
     <div className="space-y-3">
-      {erradas.map((q) => (
+      {visiveis.map((q) => (
         <QuestionCard key={q.id} questao={q} />
       ))}
+      <CarregarMais mostrando={visiveis.length} total={total} temMais={temMais} onVerMais={verMais} />
     </div>
   )
 }

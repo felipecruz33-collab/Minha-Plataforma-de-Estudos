@@ -7,6 +7,16 @@ export interface MateriaComContagem extends Materia {
 export interface BackupData {
   versao: 1
   exportadoEm: string
+  /**
+   * De onde o arquivo veio. Backups gerados antes deste campo existir não o
+   * têm — nesse caso vale 'pessoal', que é o que eles sempre foram.
+   *
+   * Serve pra tela avisar quando o arquivo escolhido é do tipo errado: um
+   * backup pessoal restaurado como biblioteca publicaria o conteúdo de estudo
+   * de alguém para todos os assinantes, e o contrário enterraria a biblioteca
+   * inteira dentro da conta de uma pessoa só.
+   */
+  escopo?: 'pessoal' | 'biblioteca'
   materias: Materia[]
   aulas: Aula[]
   respostas: Resposta[]
@@ -101,7 +111,20 @@ export interface DataRepository {
   listPerfis(): Promise<Perfil[]>
 
   exportBackup(userId: string): Promise<BackupData>
-  importBackup(userId: string, data: BackupData): Promise<void>
+  /**
+   * Cópia da biblioteca compartilhada — o conteúdo curado que dá mais trabalho
+   * pra montar e que nenhum usuário consegue refazer. Fora daqui ele existe em
+   * um lugar só, o banco.
+   *
+   * Não vem no `exportBackup`: aquele exporta o que é DA PESSOA, e as matérias
+   * da biblioteca não pertencem a ninguém (`user_id` nulo).
+   */
+  exportBiblioteca(): Promise<BackupData>
+  /**
+   * `paraBiblioteca` só funciona pro administrador — quem barra é a RLS do
+   * banco, não esta linha. Para qualquer outra conta a gravação é recusada.
+   */
+  importBackup(userId: string, data: BackupData, opts?: { paraBiblioteca?: boolean }): Promise<void>
 
   listGeracoes(userId: string): Promise<GeracaoIA[]>
   addGeracao(geracao: Omit<GeracaoIA, 'id' | 'criadoEm'>): Promise<GeracaoIA>
