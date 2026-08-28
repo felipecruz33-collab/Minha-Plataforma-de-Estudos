@@ -5,6 +5,7 @@ import { CarregarMais } from '../components/ui/CarregarMais'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAuth } from '../lib/auth/AuthContext'
+import { contemTodasAsPalavras } from '../lib/buscarTexto'
 import { useListaVisivel } from '../lib/hooks/useListaVisivel'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo, type MateriaComContagem } from '../lib/repo'
@@ -85,6 +86,7 @@ export default function Questoes() {
   const [assunto, setAssunto] = useSelect()
   const [confirmandoEsquecer, setConfirmandoEsquecer] = useState(false)
   const [esquecendo, setEsquecendo] = useState(false)
+  const [aExcluir, setAExcluir] = useState<QuestaoComOrigem | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -143,7 +145,7 @@ export default function Questoes() {
   )
 
   const filtradas = useMemo(() => {
-    const termo = busca.trim().toLowerCase()
+    const termo = busca.trim()
     return questoes.filter((q) => {
       if (materiaId && q.materiaId !== materiaId) return false
       if (aulaId && q.aulaId !== aulaId) return false
@@ -155,7 +157,20 @@ export default function Questoes() {
       if (banca && q.banca !== banca) return false
       if (ano && q.ano !== ano) return false
       if (assunto && q.tema !== assunto) return false
-      if (termo && !q.enunciado.toLowerCase().includes(termo)) return false
+      // A busca cobre a questão inteira, não só o enunciado: muita coisa que a
+      // pessoa lembra está numa alternativa ou na explicação — e era ali que a
+      // busca antiga falhava sem dizer por quê.
+      if (termo) {
+        const textoDaQuestao = [
+          q.enunciado,
+          q.explicacao,
+          q.tema,
+          q.orgao,
+          ...q.alternativas.map((a) => a.texto),
+          ...Object.values(q.altExp),
+        ].join(' ')
+        if (!contemTodasAsPalavras(textoDaQuestao, termo)) return false
+      }
       return true
     })
   }, [questoes, respostaPorQuestao, busca, materiaId, aulaId, situacao, banca, ano, assunto])
@@ -202,6 +217,34 @@ export default function Questoes() {
     }
   }
 
+  /**
+   * Quem pode apagar o quê.
+   *
+   * A questão é sua se veio de uma matéria sua. Da biblioteca, só o
+   * administrador — que é quem cura aquele conteúdo e precisa poder tirar uma
+   * questão ruim de lá. Isto é só a tela: quem recusa de verdade é a RLS do
+   * banco, que aplica exatamente a mesma regra.
+   */
+  function podeExcluir(q: QuestaoComOrigem): boolean {
+    return q.origem === 'pessoal' || !!perfil?.isAdmin
+  }
+
+  async function excluir() {
+    const q = aExcluir
+    setAExcluir(null)
+    if (!q || !dados) return
+    // Some da tela na hora; o cache do repositório já foi limpo pela escrita,
+    // então a próxima visita traz a lista certa do servidor de qualquer jeito.
+    setDados({ ...dados, questoes: dados.questoes.filter((x) => x.id !== q.id) })
+    try {
+      await repo.excluirQuestao(q.id)
+    } catch {
+      // Devolve a questão para a lista: sumir da tela sem ter sumido do banco
+      // seria pior do que o erro, porque ela voltaria sozinha depois.
+      setDados((atual) => (atual ? { ...atual, questoes: [...atual.questoes, q] } : atual))
+    }
+  }
+
   const selectCls = 'rounded-lg border border-slate-300 px-2.5 py-2 text-sm outline-none focus:border-brand-blue'
 
   return (
@@ -223,7 +266,7 @@ export default function Questoes() {
           type="text"
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
-          placeholder="Buscar por enunciado…"
+          placeholder="Buscar por qualquer palavra da questão…"
           className="w-full text-sm outline-none"
         />
       </label>
@@ -333,12 +376,29 @@ export default function Questoes() {
               >
                 {q.origem === 'biblioteca' ? 'Biblioteca' : 'Minha'}
               </span>
-              <QuestionCard questao={q} respostaAnterior={respostaPorQuestao.get(q.id) ?? null} />
+              <QuestionCard
+                questao={q}
+                respostaAnterior={respostaPorQuestao.get(q.id) ?? null}
+                onExcluir={podeExcluir(q) ? () => setAExcluir(q) : undefined}
+              />
             </div>
           ))}
           <CarregarMais mostrando={visiveis.length} total={total} temMais={temMais} onVerMais={verMais} />
         </div>
       )}
+
+      <ConfirmDialog
+        open={aExcluir !== null}
+        title="Excluir esta questão?"
+        description={
+          aExcluir?.origem === 'biblioteca'
+            ? 'Esta questão é da biblioteca compartilhada: excluir tira ela de TODOS os assinantes, não só de você. As respostas dadas a ela também são apagadas.'
+            : 'A questão sai do seu banco e da aula onde ela aparece. As respostas que você deu a ela também são apagadas, então o Desempenho muda. Se você reimportar o PDF dessa aula, ela volta.'
+        }
+        confirmLabel="Excluir questão"
+        onConfirm={excluir}
+        onCancel={() => setAExcluir(null)}
+      />
 
       <ConfirmDialog
         open={confirmandoEsquecer}

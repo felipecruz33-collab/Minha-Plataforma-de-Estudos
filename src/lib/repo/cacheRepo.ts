@@ -157,6 +157,9 @@ export class CachedRepository implements DataRepository {
   registrarResposta(resposta: Omit<Resposta, 'id' | 'respondidoEm'>) {
     return this.escrever(() => this.base.registrarResposta(resposta))
   }
+  excluirQuestao(questaoId: string) {
+    return this.escrever(() => this.base.excluirQuestao(questaoId))
+  }
   esquecerRespostas(userId: string, escopo: { materiaId?: string; aulaId?: string }) {
     return this.escrever(() => this.base.esquecerRespostas(userId, escopo))
   }

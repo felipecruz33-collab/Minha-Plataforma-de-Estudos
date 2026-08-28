@@ -291,6 +291,11 @@ export class SupabaseRepository implements DataRepository {
     if (falha?.error) throw falha.error
   }
 
+  async excluirQuestao(questaoId: string): Promise<void> {
+    const { error } = await this.db().from('questoes').delete().eq('id', questaoId)
+    if (error) throw error
+  }
+
   async listRespostas(userId: string): Promise<Resposta[]> {
     const { data, error } = await this.db().from('respostas').select('*').eq('user_id', userId)
     if (error) throw error

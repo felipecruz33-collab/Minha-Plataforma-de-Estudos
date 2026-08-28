@@ -78,6 +78,16 @@ export interface DataRepository {
    */
   listAulasComQuestoes(materiaIds: string[]): Promise<AulaComQuestoes[]>
 
+  /**
+   * Tira uma questão do banco de vez.
+   *
+   * Quem pode é decidido pelo banco, não por esta linha: a RLS permite apagar
+   * questão de matéria própria, e questão da biblioteca só para o
+   * administrador. As respostas dadas a ela caem junto, por cascata — é o que
+   * o schema define, e a tela avisa disso antes de confirmar.
+   */
+  excluirQuestao(questaoId: string): Promise<void>
+
   listRespostas(userId: string): Promise<Resposta[]>
   registrarResposta(resposta: Omit<Resposta, 'id' | 'respondidoEm'>): Promise<Resposta>
   /**

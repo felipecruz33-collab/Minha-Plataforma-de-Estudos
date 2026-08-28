@@ -1,4 +1,4 @@
-import { Star } from 'lucide-react'
+import { Star, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useAuth } from '../lib/auth/AuthContext'
 import { repo } from '../lib/repo'
@@ -16,10 +16,19 @@ interface QuestionCardProps {
    * mostrar a mesma coisa que o filtro está dizendo.
    */
   respostaAnterior?: Resposta | null
+  /**
+   * Se vier, o cartão mostra o botão de excluir.
+   *
+   * Opcional porque só a tela de Questões oferece isso: no simulado em
+   * andamento e no meio de uma aula, um botão de apagar ao lado das
+   * alternativas é um erro esperando acontecer. Quem decide se a pessoa PODE
+   * apagar aquela questão é a tela — e, no fim, a RLS do banco.
+   */
+  onExcluir?: () => void
   onRespondida?: (correta: boolean) => void
 }
 
-export function QuestionCard({ questao, respostaAnterior, onRespondida }: QuestionCardProps) {
+export function QuestionCard({ questao, respostaAnterior, onExcluir, onRespondida }: QuestionCardProps) {
   const { user, perfil, toggleFavorito } = useAuth()
   const [escolha, setEscolha] = useState<string | null>(respostaAnterior?.alternativaEscolhida ?? null)
   const [respondida, setRespondida] = useState(!!respostaAnterior)
@@ -108,6 +117,19 @@ export function QuestionCard({ questao, respostaAnterior, onRespondida }: Questi
           </p>
           {questao.explicacao && <p className="text-slate-600">{questao.explicacao}</p>}
           {questao.altExp[escolha ?? ''] && <p className="text-slate-500">{questao.altExp[escolha ?? '']}</p>}
+        </div>
+      )}
+
+      {onExcluir && (
+        <div className="mt-3 flex justify-end border-t border-slate-100 pt-2">
+          <button
+            type="button"
+            onClick={onExcluir}
+            className="flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-red-600"
+          >
+            <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+            Excluir questão
+          </button>
         </div>
       )}
     </Card>
