@@ -222,6 +222,20 @@ export class LocalRepository implements DataRepository {
     )
   }
 
+  async excluirQuestao(questaoId: string): Promise<void> {
+    const s = load()
+    for (const aula of s.aulas) {
+      const antes = aula.questoes.length
+      aula.questoes = aula.questoes.filter((q) => q.id !== questaoId)
+      if (aula.questoes.length !== antes) aula.atualizadoEm = new Date().toISOString()
+    }
+    // No Supabase isto é uma cascata do próprio banco; aqui precisa ser feito
+    // à mão, senão sobrariam respostas apontando para uma questão que não
+    // existe mais e o Desempenho contaria acertos de nada.
+    s.respostas = s.respostas.filter((r) => r.questaoId !== questaoId)
+    save(s)
+  }
+
   async listRespostas(userId: string): Promise<Resposta[]> {
     const s = load()
     return s.respostas.filter((r) => r.userId === userId)
