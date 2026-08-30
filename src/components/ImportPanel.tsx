@@ -55,6 +55,18 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   const restantes = cota?.restantes ?? null
   const semPdfsRestantes = restantes === 0
   const paginasPermitidas = limitePaginas(perfil)
+
+  /**
+   * Ler as imagens das páginas só existe pra quem tem chave própria.
+   *
+   * Não é uma preferência de interface: uma página como imagem custa muitas
+   * vezes o que a mesma página custa em texto, e a cota compartilhada da
+   * plataforma é o recurso mais escasso daqui. Quem liga isso paga com a
+   * própria chave — e o servidor recusa se ela não vier.
+   */
+  const temChavePropria = Boolean(perfil?.chaveGemini?.trim())
+  const [lerImagens, setLerImagens] = useState(false)
+  const usarImagens = lerImagens && temChavePropria
   const quandoRenova = cota?.renovaEm
     ? cota.renovaEm.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
     : null
@@ -187,9 +199,35 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
     const nomeEscolhido = resolverNomeMateria(escolhaMateria)
     try {
       setEtapa('Lendo o PDF…')
-      const { extrairTextoPdf, gerarAulaViaIA, partesRecomendadas } = await import('../lib/ai/pdfToAula')
+      const mod = await import('../lib/ai/pdfToAula')
+      const { extrairTextoPdf, gerarAulaViaIA, partesRecomendadas } = mod
       const { texto, numPaginas } = await extrairTextoPdf(file)
       if (!texto) throw new Error('Não foi possível extrair texto deste PDF (pode ser um PDF escaneado sem OCR).')
+
+      if (usarImagens) {
+        if (numPaginas > mod.MAX_PAGINAS_COM_IMAGEM) {
+          setErrors([
+            `Com a leitura de imagens ligada, o limite é de ${mod.MAX_PAGINAS_COM_IMAGEM} páginas (este PDF tem ${numPaginas}). ` +
+              'Cada página vira uma imagem, o que pesa muito mais na sua cota e demora bem mais pra preparar. ' +
+              'Desligue a opção, ou divida o arquivo.',
+          ])
+          return
+        }
+
+        setEtapa('Preparando as imagens das páginas…')
+        const paginas = await mod.extrairPaginas(file, { comImagens: true })
+
+        setEtapa('Lendo texto e imagens com a sua chave do Gemini…')
+        const payloads = await mod.gerarAulaComImagens(
+          paginas,
+          nomeEscolhido,
+          file.name,
+          perfil?.chaveGemini,
+          (feitas, total) => setEtapa(`Lendo texto e imagens… parte ${feitas + 1} de ${total}`),
+        )
+        await salvarPayloadsGerados(payloads, file.name, nomeEscolhido)
+        return
+      }
 
       // Conferido aqui pra avisar ANTES de gastar cota e minutos de espera. O
       // servidor confere de novo por conta própria — esta checagem é
@@ -410,6 +448,27 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                 }}
               />
             </label>
+
+            {/* Só aparece pra quem tem chave própria: sem ela o servidor
+                recusa, e uma opção que sempre falha é pior que opção nenhuma. */}
+            {temChavePropria && (
+              <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <input
+                  type="checkbox"
+                  checked={lerImagens}
+                  onChange={(e) => setLerImagens(e.target.checked)}
+                  disabled={busy}
+                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-blue"
+                />
+                <span className="text-xs text-slate-500">
+                  <strong className="text-slate-700">Ler também as imagens das páginas</strong> — a IA enxerga
+                  fórmulas, gráficos e tabelas em vez de só o texto solto. Útil em exatas.
+                  <br />
+                  Usa <strong>só a sua chave do Gemini</strong>, sem os provedores de reserva: se ela falhar, a
+                  importação falha. Gasta bem mais da sua cota, demora mais, e o limite cai para 40 páginas.
+                </span>
+              </label>
+            )}
           </div>
         ) : (
           <label className="flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed border-slate-300 p-8 text-center hover:border-brand-blue">
