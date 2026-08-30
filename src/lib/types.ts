@@ -52,6 +52,14 @@ export interface Aula {
    * separados evita ter que inventar uma ordem pra tudo que já existe.
    */
   ordem: number | null
+  /**
+   * Se esta aula é uma CÓPIA da biblioteca compartilhada.
+   *
+   * Sem Premium, o título continua visível mas o conteúdo não vem — quem
+   * decide isso é a RLS do banco (0016), não a tela. Aula criada pela própria
+   * pessoa nunca é marcada.
+   */
+  daBiblioteca: boolean
   criadoEm: string
   atualizadoEm: string
 }

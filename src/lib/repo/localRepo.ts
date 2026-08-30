@@ -122,7 +122,11 @@ export class LocalRepository implements DataRepository {
     return s.aulas.filter((a) => materiaIds.has(a.materiaId))
   }
 
-  async upsertAula(userId: string, payload: AulaImportPayload, opts: { isBiblioteca: boolean }): Promise<Aula> {
+  async upsertAula(
+    userId: string,
+    payload: AulaImportPayload,
+    opts: { isBiblioteca: boolean; daBiblioteca?: boolean },
+  ): Promise<Aula> {
     const s = load()
 
     let materia = s.materias.find(
@@ -171,6 +175,8 @@ export class LocalRepository implements DataRepository {
       // Aula reimportada mantém a posição que já tinha; aula nova entra sem
       // ordem definida, e `ordenarAulas` a coloca no fim da lista.
       ordem: existente?.ordem ?? null,
+      // Só liga, nunca desliga — espelha o gatilho do banco (migração 0016).
+      daBiblioteca: !!opts.daBiblioteca || !!existente?.daBiblioteca,
       criadoEm: existente?.criadoEm ?? now,
       atualizadoEm: now,
     }
@@ -395,6 +401,9 @@ export class LocalRepository implements DataRepository {
         ...a,
         id: newAulaId,
         materiaId: newMateriaId,
+        // A marca vem junto no backup — ver a mesma decisão no repositório
+        // Supabase. Restaurar não pode ser um jeito de destravar.
+        daBiblioteca: !paraBiblioteca && !!a.daBiblioteca,
         questoes: a.questoes.map((q, i) => ({ ...q, id: `${newAulaId}:q${i}`, aulaId: newAulaId, materiaId: newMateriaId })),
       })
     }

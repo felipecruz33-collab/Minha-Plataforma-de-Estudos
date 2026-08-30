@@ -23,7 +23,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAuth } from '../lib/auth/AuthContext'
 import { compararTitulos } from '../lib/ordenarAulas'
-import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
+import { podeVerBiblioteca as calcPodeVerBiblioteca, temPremium } from '../lib/premium'
 import { repo } from '../lib/repo'
 import type { Aula, Materia } from '../lib/types'
 
@@ -32,6 +32,9 @@ export default function MateriaDetail() {
   const location = useLocation()
   const isBiblioteca = location.pathname.startsWith('/biblioteca')
   const { perfil } = useAuth()
+
+  /** Cópia da biblioteca numa conta sem Premium: o título aparece, o conteúdo não. */
+  const aulaBloqueada = (a: Aula) => a.daBiblioteca && !temPremium(perfil)
   const podeVerBiblioteca = calcPodeVerBiblioteca(perfil)
   const podeGerir = isBiblioteca ? !!perfil?.isAdmin : true
   const acessoLiberado = !isBiblioteca || podeVerBiblioteca
@@ -288,14 +291,28 @@ export default function MateriaDetail() {
                 </div>
               ) : (
                 <Link to={`/aulas/${a.id}`} className="flex min-w-0 flex-1 items-center gap-3">
-                  <div className="rounded-lg bg-slate-100 p-2.5">
-                    <BookOpenText className="h-4 w-4 text-navy" strokeWidth={1.75} />
+                  {/* Cópia da biblioteca sem Premium: o cadeado no lugar do
+                      ícone é o que diferencia "bloqueada" de "vazia". Sem ele
+                      a linha diria "0 blocos · 0 questões" e pareceria que o
+                      conteúdo sumiu. */}
+                  <div className={`rounded-lg p-2.5 ${aulaBloqueada(a) ? 'bg-amber-50' : 'bg-slate-100'}`}>
+                    {aulaBloqueada(a) ? (
+                      <Lock className="h-4 w-4 text-amber-600" strokeWidth={1.75} />
+                    ) : (
+                      <BookOpenText className="h-4 w-4 text-navy" strokeWidth={1.75} />
+                    )}
                   </div>
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-navy">{a.titulo}</p>
                     <p className="text-xs text-slate-400">
-                      {a.blocos.length} {a.blocos.length === 1 ? 'bloco' : 'blocos'} · {a.questoes.length}{' '}
-                      {a.questoes.length === 1 ? 'questão' : 'questões'}
+                      {aulaBloqueada(a) ? (
+                        <span className="text-amber-700">Da biblioteca · reative o Premium para ver</span>
+                      ) : (
+                        <>
+                          {a.blocos.length} {a.blocos.length === 1 ? 'bloco' : 'blocos'} · {a.questoes.length}{' '}
+                          {a.questoes.length === 1 ? 'questão' : 'questões'}
+                        </>
+                      )}
                     </p>
                   </div>
                 </Link>
