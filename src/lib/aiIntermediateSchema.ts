@@ -65,11 +65,18 @@ const QuestaoIntermediateSchema = z.object({
   altExp: z.record(z.string(), z.string()),
 })
 
-const AulaIntermediateSchema = z.object({
-  titulo: z.string().min(1),
-  blocos: z.array(BlocoIntermediateSchema).min(1),
-  questoes: z.array(QuestaoIntermediateSchema),
-})
+const AulaIntermediateSchema = z
+  .object({
+    titulo: z.string().min(1),
+    blocos: z.array(BlocoIntermediateSchema),
+    questoes: z.array(QuestaoIntermediateSchema),
+  })
+  // Antes exigia pelo menos um bloco. Isso recusava um PDF que é só banco de
+  // questões — sem teoria pra extrair, mas cheio de conteúdo útil. O que a
+  // aula não pode é vir completamente vazia.
+  .refine((a) => a.blocos.length > 0 || a.questoes.length > 0, {
+    message: 'aula sem nenhum bloco e sem nenhuma questão',
+  })
 
 export const AulaGeradaIntermediateSchema = z.object({
   materia: z.string().min(1),
