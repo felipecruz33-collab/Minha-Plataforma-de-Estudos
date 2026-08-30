@@ -95,9 +95,12 @@ function montarTextoDaPagina(trechos: TrechoPdf[]): string {
   return partes.join(' ')
 }
 
-async function extractText(file: File): Promise<string[]> {
+async function abrirPdf(file: File) {
   const buffer = await file.arrayBuffer()
-  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise
+  return pdfjsLib.getDocument({ data: buffer }).promise
+}
+
+async function extractText(pdf: any): Promise<string[]> {
   const pages: string[] = []
 
   for (let i = 1; i <= pdf.numPages; i++) {
@@ -113,16 +116,21 @@ async function extractText(file: File): Promise<string[]> {
     }
 
     const content = await page.getTextContent()
-    const itens = content.items.filter((item): item is typeof item & { str: string } => 'str' in item)
+    // `pdf` é `any` (o tipo do pdf.js não viaja bem por aqui), então os itens
+    // precisam do formato declarado à mão. Só usamos estes quatro campos.
+    type ItemDeTexto = { str: string; height?: number; fontName?: string }
+    const itens: ItemDeTexto[] = (content.items as unknown[]).filter(
+      (item): item is ItemDeTexto => typeof (item as ItemDeTexto).str === 'string',
+    )
 
-    const corpo = tamanhoDoCorpo(itens.filter((it) => it.str.trim()).map((it) => (it as any).height ?? 0))
+    const corpo = tamanhoDoCorpo(itens.filter((it) => it.str.trim()).map((it) => it.height ?? 0))
 
     const trechos: TrechoPdf[] = itens.map((item) => {
-      const altura: number = (item as any).height ?? 0
+      const altura = item.height ?? 0
       let negrito = false
       if (sabeAsFontes) {
         try {
-          const fonte = page.commonObjs.get((item as any).fontName)
+          const fonte = page.commonObjs.get(item.fontName)
           negrito = FONTE_NEGRITO.test(fonte?.name ?? '')
         } catch {
           negrito = false
@@ -172,12 +180,76 @@ export function limparEspacos(texto: string): string {
 
 /** Extrai o texto do PDF inteiro (todas as páginas, separadas por linha em branco) e a contagem de páginas. */
 export async function extrairTextoPdf(file: File): Promise<{ texto: string; numPaginas: number }> {
-  const paginas = await extractText(file)
+  const paginas = await extractText(await abrirPdf(file))
   const texto = paginas
     .map(limparEspacos)
     .filter(Boolean)
     .join('\n\n')
   return { texto, numPaginas: paginas.length }
+}
+
+/**
+ * Resolução em que a página é desenhada para virar imagem.
+ *
+ * 1,6 põe uma A4 em cerca de 950x1350 — o bastante para a IA ler nota de
+ * rodapé e índice de fórmula. Medindo uma página de matemática com gráfico e
+ * tabela: 83 kB em WebP nessa faixa, contra 183 kB no dobro da resolução.
+ * Acima disso o arquivo cresce muito mais rápido do que a legibilidade.
+ */
+const ESCALA_IMAGEM = 1.6
+
+/**
+ * WebP a 70%, e não JPEG.
+ *
+ * Medido na mesma página: WebP sai ~30% menor que o JPEG equivalente, e o
+ * Gemini aceita os dois. Como o limite do pedido é de tamanho, 30% é uma
+ * página a mais por chamada.
+ */
+const QUALIDADE_IMAGEM = 0.7
+
+/** Desenha uma página do PDF e devolve a imagem como texto (data URL). */
+async function renderizarPagina(pdf: any, numero: number): Promise<string> {
+  const page = await pdf.getPage(numero)
+  const viewport = page.getViewport({ scale: ESCALA_IMAGEM })
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.floor(viewport.width)
+  canvas.height = Math.floor(viewport.height)
+  const contexto = canvas.getContext('2d')
+  if (!contexto) throw new Error('Não foi possível desenhar a página do PDF neste navegador.')
+  await page.render({ canvasContext: contexto, viewport }).promise
+  const url = canvas.toDataURL('image/webp', QUALIDADE_IMAGEM)
+  // Libera a memória do canvas na hora: num PDF de dezenas de páginas, deixar
+  // isso para o coletor de lixo derruba o navegador do celular.
+  canvas.width = 0
+  canvas.height = 0
+  return url
+}
+
+export interface PaginaDoPdf {
+  /** Texto da página, já com os marcadores de negrito e título. */
+  texto: string
+  /** A página desenhada, em data URL. Só existe quando pedida. */
+  imagem?: string
+}
+
+/**
+ * Páginas do PDF uma a uma, opcionalmente com a imagem de cada uma.
+ *
+ * Existe separado de `extrairTextoPdf` porque no modo com imagem o corte em
+ * pedaços deixa de ser por quantidade de caracteres e passa a ser POR PÁGINA:
+ * a imagem e o texto de uma página precisam viajar na mesma chamada, senão a
+ * IA vê uma figura sem o texto que a explica.
+ */
+export async function extrairPaginas(file: File, opcoes: { comImagens: boolean }): Promise<PaginaDoPdf[]> {
+  const pdf = await abrirPdf(file)
+  const textos = await extractText(pdf)
+
+  const paginas: PaginaDoPdf[] = []
+  for (let i = 0; i < textos.length; i++) {
+    const texto = limparEspacos(textos[i])
+    paginas.push(opcoes.comImagens ? { texto, imagem: await renderizarPagina(pdf, i + 1) } : { texto })
+  }
+  return paginas
 }
 
 // Tamanho de cada pedaço, em páginas.
@@ -247,8 +319,15 @@ async function gerarAulasDoTexto(
   materiaOverride: string | undefined,
   nomeArquivo: string,
   chaveUsuario: string | null | undefined,
+  imagens?: string[],
 ): Promise<AulaImportPayload[]> {
-  const corpo = JSON.stringify({ texto, materiaOverride, nomeArquivo, chaveUsuario: chaveUsuario || undefined })
+  const corpo = JSON.stringify({
+    texto,
+    materiaOverride,
+    nomeArquivo,
+    chaveUsuario: chaveUsuario || undefined,
+    paginas: imagens?.length ? imagens : undefined,
+  })
 
   // Gerar uma aula é uma requisição longa (pode levar minutos), e em rede
   // móvel uma conexão parada esse tempo todo às vezes cai antes de responder.
@@ -483,4 +562,84 @@ async function gerarComSubdivisao(
     }
     return aulas
   }
+}
+
+
+/**
+ * Quantas páginas viajam em cada chamada no modo com imagem.
+ *
+ * Medindo uma apostila de matemática de 40 páginas com gráfico: 86 kB por
+ * página em WebP. Seis páginas dão meio megabyte — bem abaixo do teto de
+ * pedido, com margem de sobra pra páginas muito mais densas que essa.
+ *
+ * Menor que as 8 do modo só-texto de propósito: aqui cada página pesa cerca
+ * de cem vezes mais, e um pedido que estoura o tamanho falha inteiro.
+ */
+export const PAGINAS_POR_PARTE_COM_IMAGEM = 6
+
+/**
+ * Teto de páginas no modo com imagem.
+ *
+ * Medido: 106 ms por página pra desenhar num navegador de computador. Num
+ * celular mediano isso é três a quatro vezes mais, então 40 páginas são uns
+ * quinze segundos de preparo ANTES de a IA começar — o limite em que a espera
+ * ainda parece "trabalhando" e não "travou".
+ *
+ * O outro motivo é a cota de quem ligou o modo: cada página como imagem custa
+ * muitas vezes o que a mesma página custa em texto, e quem paga é a chave da
+ * própria pessoa.
+ */
+export const MAX_PAGINAS_COM_IMAGEM = 40
+
+/**
+ * Quantas chamadas em paralelo no modo com imagem.
+ *
+ * Duas, e não três: cada chamada carrega meio megabyte de subida, e três ao
+ * mesmo tempo numa rede móvel disputam a mesma banda estreita — sem contar o
+ * limite de pedidos por minuto da chave gratuita do Gemini, que é de quem
+ * ligou o modo.
+ */
+const ETAPAS_SIMULTANEAS_COM_IMAGEM = 2
+
+/**
+ * Gera a aula mandando as páginas desenhadas junto com o texto.
+ *
+ * O corte em pedaços aqui é POR PÁGINA, não por quantidade de caracteres como
+ * no modo só-texto: a imagem de uma página e o texto dela precisam chegar na
+ * mesma chamada, senão a IA vê uma figura sem o texto que a explica — ou pior,
+ * o texto de uma página junto da figura de outra.
+ */
+export async function gerarAulaComImagens(
+  paginas: PaginaDoPdf[],
+  materiaOverride: string | undefined,
+  nomeArquivo: string,
+  chaveUsuario: string | null | undefined,
+  onProgresso?: (concluidas: number, total: number) => void,
+): Promise<AulaImportPayload[]> {
+  const lotes: PaginaDoPdf[][] = []
+  for (let i = 0; i < paginas.length; i += PAGINAS_POR_PARTE_COM_IMAGEM) {
+    lotes.push(paginas.slice(i, i + PAGINAS_POR_PARTE_COM_IMAGEM))
+  }
+
+  const resultados: AulaImportPayload[][] = new Array(lotes.length)
+  let concluidas = 0
+  let proxima = 0
+
+  async function trabalhador() {
+    while (proxima < lotes.length) {
+      const i = proxima++
+      const lote = lotes[i]
+      const texto = lote.map((p) => p.texto).filter(Boolean).join('\n\n')
+      const imagens = lote.map((p) => p.imagem).filter((img): img is string => !!img)
+      resultados[i] = await gerarAulasDoTexto(texto, lote.length, materiaOverride, nomeArquivo, chaveUsuario, imagens)
+      onProgresso?.(++concluidas, lotes.length)
+    }
+  }
+
+  onProgresso?.(0, lotes.length)
+  await Promise.all(
+    Array.from({ length: Math.min(ETAPAS_SIMULTANEAS_COM_IMAGEM, lotes.length) }, trabalhador),
+  )
+
+  return mesclarAulasDoMesmoPdf(resultados.flat())
 }

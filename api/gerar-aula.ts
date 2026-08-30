@@ -10,6 +10,16 @@ import { CHARS_POR_PAGINA, JANELA_PDF_DIAS, LIMITE_PDF_GRATIS, limitePaginas } f
 // de corpo de requisição em funções serverless da Vercel — fica com folga.
 const MAX_TEXTO_CHARS = 350_000
 
+/**
+ * Teto do peso das imagens num pedido.
+ *
+ * Medindo uma apostila de matemática de 40 páginas com gráfico: 86 kB por
+ * página em WebP, ou 0,67 MB num lote de 8 páginas. 3 MB dá folga de mais de
+ * quatro vezes sobre esse caso — o suficiente pra páginas muito mais densas
+ * — e ainda fica abaixo do que a plataforma aceita por requisição.
+ */
+const MAX_IMAGENS_BYTES = 3 * 1024 * 1024
+
 // Alias que a Google mantém sempre apontando pro Flash mais recente — evita
 // fixar uma versão específica (ex.: "gemini-3-flash") que pode ser descontinuada.
 // O Flash é o modelo recomendado no tier gratuito (Pro não tem cota grátis).
@@ -355,11 +365,33 @@ function tentativaTempoEsgotado(provedor: ProvedorConfig['provedor']): Tentativa
     : { res, provedor: provedor as 'groq' | 'openrouter' | 'cerebras' | 'cohere', dados: {} }
 }
 
-async function chamarGemini(apiKey: string, promptTexto: string, inicio: number): Promise<Tentativa> {
+/**
+ * Uma imagem de página no formato que o Gemini espera.
+ *
+ * O navegador manda `data:image/webp;base64,XXXX`; a API quer o tipo e os
+ * dados separados. Devolve null pro que não estiver nesse formato — imagem
+ * malformada tem que ser descartada aqui, não virar um pedido inválido lá.
+ */
+export function parteDeImagem(dataUrl: string): { inlineData: { mimeType: string; data: string } } | null {
+  const casou = /^data:(image\/[a-z+]+);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
+  if (!casou) return null
+  return { inlineData: { mimeType: casou[1], data: casou[2] } }
+}
+
+async function chamarGemini(
+  apiKey: string,
+  promptTexto: string,
+  inicio: number,
+  imagens: string[] = [],
+): Promise<Tentativa> {
+  // As imagens vêm ANTES do texto: o Gemini associa melhor o comentário à
+  // figura quando a figura já foi apresentada.
+  const partes = [...imagens.map(parteDeImagem).filter((p) => p !== null), { text: promptTexto }]
+
   const montarCorpo = (variante: VarianteThinking) =>
     JSON.stringify({
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT_GERAR_AULA }] },
-      contents: [{ role: 'user', parts: [{ text: promptTexto }] }],
+      contents: [{ role: 'user', parts: partes }],
       generationConfig: {
         responseMimeType: 'application/json',
         responseJsonSchema: AULA_GERADA_JSON_SCHEMA,
@@ -625,8 +657,17 @@ interface ProvedorConfig {
   chave: string
 }
 
-async function chamarProvedor(cfg: ProvedorConfig, promptTexto: string, inicio: number): Promise<Tentativa> {
-  if (cfg.provedor === 'gemini') return chamarGemini(cfg.chave, promptTexto, inicio)
+async function chamarProvedor(
+  cfg: ProvedorConfig,
+  promptTexto: string,
+  inicio: number,
+  imagens: string[] = [],
+): Promise<Tentativa> {
+  if (cfg.provedor === 'gemini') return chamarGemini(cfg.chave, promptTexto, inicio, imagens)
+  // Os provedores compatíveis com OpenAI daqui são todos só-texto. Nunca
+  // chegam aqui com imagem (o modo com imagem monta uma lista só com o
+  // Gemini), mas se um dia chegarem, ignorar a imagem é melhor do que mandar
+  // um pedido que o provedor recusa.
   const compat =
     cfg.provedor === 'groq' ? GROQ : cfg.provedor === 'cerebras' ? CEREBRAS : cfg.provedor === 'cohere' ? COHERE : OPENROUTER
   return chamarOpenAiCompat(compat, cfg.chave, promptTexto, inicio)
@@ -736,6 +777,9 @@ async function chamarComReserva(
   // "grande demais", e essa informação se perdia quando outro provedor
   // falhava depois por um motivo diferente.
   statusVistos: Set<number> = new Set(),
+  // Só o modo com imagem preenche isto, e nesse modo a lista tem um provedor
+  // só (o Gemini da chave da própria pessoa) — então não há corrida.
+  imagens: string[] = [],
 ): Promise<{ tentativa: Tentativa; provedorUsado: ProvedorConfig }> {
   return new Promise((resolve) => {
     let resolvido = false
@@ -761,7 +805,7 @@ async function chamarComReserva(
       emVoo++
       const antes = Date.now()
 
-      chamarProvedor(cfg, promptTexto, inicio)
+      chamarProvedor(cfg, promptTexto, inicio, imagens)
         .then((tentativa) => {
           const segundos = ((Date.now() - antes) / 1000).toFixed(1)
           const rotulo = tentativa.res.status === STATUS_TEMPO_ESGOTADO ? 'tempo esgotado' : String(tentativa.res.status)
@@ -1320,8 +1364,9 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
     return
   }
 
-  const { texto, materiaOverride, nomeArquivo, chaveUsuario } = (req.body ?? {}) as {
+  const { texto, materiaOverride, nomeArquivo, chaveUsuario, paginas } = (req.body ?? {}) as {
     texto?: string
+    paginas?: string[]
     materiaOverride?: string
     nomeArquivo?: string
     chaveUsuario?: string
@@ -1390,7 +1435,47 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
     }
   }
 
-  const provedores = montarProvedores(chaveUsuario)
+  /**
+   * Modo com imagem: as páginas desenhadas vão junto com o texto.
+   *
+   * Três regras, e nenhuma delas é decoração:
+   *
+   * 1. EXIGE chave própria. Ler imagem custa muitas vezes mais do que ler o
+   *    mesmo conteúdo em texto, e a cota compartilhada da plataforma é o
+   *    recurso mais escasso que existe aqui.
+   * 2. SÓ o Gemini dessa chave. Groq, Cerebras, OpenRouter e Cohere são
+   *    só-texto — deixar um deles na corrida seria mandar um pedido que ele
+   *    não sabe processar.
+   * 3. Sem corrida, então sem plano B. É o preço do modo, e a tela avisa
+   *    disso antes de a pessoa ligar.
+   */
+  const comImagens = Array.isArray(paginas) && paginas.length > 0
+
+  if (comImagens && !chaveUsuario?.trim()) {
+    responder(400, {
+      ok: false,
+      error: 'A leitura das imagens do PDF só funciona com a sua própria chave do Gemini, configurada em "Perfil".',
+    })
+    return
+  }
+
+  // Teto de segurança do tamanho do pedido. A plataforma recusa corpo acima
+  // de alguns megabytes, e uma recusa dessas chega ao navegador como um erro
+  // sem explicação — melhor barrar aqui, com uma mensagem que diz o que fazer.
+  const pesoImagens = comImagens ? paginas!.reduce((n, p) => n + p.length, 0) : 0
+  if (pesoImagens > MAX_IMAGENS_BYTES) {
+    responder(413, {
+      ok: false,
+      error: `As imagens dessas páginas somam ${Math.round(pesoImagens / 1024 / 1024)} MB, acima do que o servidor aceita por pedido. Tente um PDF com menos páginas.`,
+      tamanhoExcessivo: true,
+    })
+    return
+  }
+
+  const provedores = comImagens
+    ? [{ provedor: 'gemini' as const, chave: chaveUsuario!.trim() }]
+    : montarProvedores(chaveUsuario)
+
   if (provedores.length === 0) {
     responder(500, {
       ok: false,
@@ -1421,7 +1506,14 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
 
     const diagnostico: string[] = []
     const statusVistos = new Set<number>()
-    const { tentativa, provedorUsado } = await chamarComReserva(provedores, userText, inicio, diagnostico, statusVistos)
+    const { tentativa, provedorUsado } = await chamarComReserva(
+      provedores,
+      userText,
+      inicio,
+      diagnostico,
+      statusVistos,
+      comImagens ? paginas! : [],
+    )
     // 413 é "pedido grande demais pro limite daquele provedor". Se ele
     // apareceu em QUALQUER tentativa, dividir o PDF ajuda -- mesmo que a
     // última falha tenha sido outra coisa (chave errada, cota). Sem isso, o
