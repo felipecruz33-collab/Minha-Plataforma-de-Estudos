@@ -1,7 +1,7 @@
 import { supabase } from '../supabaseClient'
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
-import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
+import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
 import type { AulaComQuestoes, BackupData, DataRepository, MateriaComContagem } from './types'
 
 function questaoDaLinha(q: any): Questao {
@@ -464,6 +464,22 @@ export class SupabaseRepository implements DataRepository {
     return primeiraDataPorArquivo(
       (data ?? []).map((u: { arquivo: string; criado_em: string }) => ({ nome: u.arquivo, data: u.criado_em })),
     )
+  }
+
+  async usoNoPeriodo(userId: string, desdeISO: string): Promise<UsoIA[]> {
+    // Mesma tabela do limite gratuito, outra pergunta: lá interessa QUANTOS
+    // arquivos distintos, aqui interessa QUANTO de conteúdo passou pela IA.
+    const { data, error } = await this.db()
+      .from('uso_ia')
+      .select('arquivo, caracteres, criado_em')
+      .eq('user_id', userId)
+      .gte('criado_em', desdeISO)
+    if (error) throw error
+    return (data ?? []).map((u: { arquivo: string; caracteres: number | null; criado_em: string }) => ({
+      arquivo: u.arquivo,
+      caracteres: u.caracteres ?? 0,
+      criadoEm: u.criado_em,
+    }))
   }
 
   async toggleFavorito(userId: string, questaoId: string): Promise<Perfil> {

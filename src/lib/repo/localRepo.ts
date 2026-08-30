@@ -1,6 +1,6 @@
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
-import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
+import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
 import type { AulaComQuestoes, BackupData, DataRepository, MateriaComContagem } from './types'
 
 const STORAGE_KEY = 'mpe:v1'
@@ -16,10 +16,17 @@ interface Store {
   geracoes: GeracaoIA[]
   simulados: Simulado[]
   cronogramas: Record<string, Cronograma>
+  /**
+   * Medidor de IA. No modo local ninguém escreve aqui: sem Supabase o
+   * servidor não registra uso, porque não há cota compartilhada nem conta
+   * paga pra proteger. O campo existe pra que o formato seja o mesmo dos dois
+   * lados — e pra dar como semear um cenário nos testes.
+   */
+  usoIa: (UsoIA & { userId: string })[]
 }
 
 function emptyStore(): Store {
-  return { materias: [], aulas: [], respostas: [], perfis: {}, geracoes: [], simulados: [], cronogramas: {} }
+  return { materias: [], aulas: [], respostas: [], perfis: {}, geracoes: [], simulados: [], cronogramas: {}, usoIa: [] }
 }
 
 function load(): Store {
@@ -319,6 +326,7 @@ export class LocalRepository implements DataRepository {
     s.aulas = s.aulas.filter((a) => !aulaIds.has(a.id))
     s.respostas = s.respostas.filter((r) => r.userId !== userId)
     s.geracoes = s.geracoes.filter((g) => g.userId !== userId)
+    s.usoIa = (s.usoIa ?? []).filter((u) => u.userId !== userId)
     s.simulados = s.simulados.filter((x) => x.userId !== userId)
     delete s.cronogramas[userId]  // cronograma é um por usuário, guardado por id
     delete s.perfis[userId]
@@ -330,6 +338,13 @@ export class LocalRepository implements DataRepository {
     return primeiraDataPorArquivo(
       s.geracoes.filter((g) => g.userId === userId && g.criadoEm >= desdeISO).map((g) => ({ nome: g.nomeArquivo, data: g.criadoEm })),
     )
+  }
+
+  async usoNoPeriodo(userId: string, desdeISO: string): Promise<UsoIA[]> {
+    const s = load()
+    return (s.usoIa ?? [])
+      .filter((u) => u.userId === userId && u.criadoEm >= desdeISO)
+      .map(({ arquivo, caracteres, criadoEm }) => ({ arquivo, caracteres, criadoEm }))
   }
 
   async toggleFavorito(userId: string, questaoId: string): Promise<Perfil> {

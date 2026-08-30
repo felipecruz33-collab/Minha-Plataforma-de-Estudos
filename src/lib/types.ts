@@ -142,6 +142,19 @@ export interface GeracaoIA {
   criadoEm: string
 }
 
+/**
+ * Uma linha do medidor de IA (`uso_ia`): um pedido enviado ao servidor.
+ *
+ * Um PDF dividido em partes deixa uma linha por parte, todas com o mesmo
+ * `arquivo` — somar `caracteres` dá o tamanho do PDF inteiro, e contar
+ * `arquivo` distinto dá o número de PDFs.
+ */
+export interface UsoIA {
+  arquivo: string
+  caracteres: number
+  criadoEm: string
+}
+
 export interface Perfil {
   userId: string
   email: string

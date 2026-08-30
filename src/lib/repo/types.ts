@@ -1,4 +1,4 @@
-import type { Aula, AulaImportPayload, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado } from '../types'
+import type { Aula, AulaImportPayload, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
 
 export interface MateriaComContagem extends Materia {
   numAulas: number
@@ -124,6 +124,11 @@ export interface DataRepository {
    * mais antiga pra dizer quando a cota renova.
    */
   pdfsNoPeriodo(userId: string, desdeISO: string): Promise<string[]>
+  /**
+   * Linhas cruas do medidor de IA desde `desdeISO`. A tela do Premium soma os
+   * caracteres pra saber quantas páginas já foram convertidas no mês.
+   */
+  usoNoPeriodo(userId: string, desdeISO: string): Promise<UsoIA[]>
   toggleFavorito(userId: string, questaoId: string): Promise<Perfil>
   /** Só retorna dados úteis para o administrador — ver RLS em 0003_admin_lista_usuarios.sql. */
   listPerfis(): Promise<Perfil[]>

@@ -4,13 +4,18 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth/AuthContext'
 import {
   JANELA_PDF_DIAS,
+  JANELA_PREMIUM_DIAS,
   LIMITE_PAGINAS_PREMIUM,
+  LIMITE_PAGINAS_PREMIUM_MES,
   LIMITE_PDF_GRATIS,
   inicioDaJanelaPdf,
+  inicioDaJanelaPremium,
   limitePaginas,
   situacaoPdf,
+  situacaoPremium,
   temPremium,
 } from '../lib/premium'
+import type { UsoIA } from '../lib/types'
 import { repo } from '../lib/repo'
 import { validateAulaImport } from '../lib/schema'
 import { MateriaPicker, resolverNomeMateria, type EscolhaMateria } from './MateriaPicker'
@@ -36,6 +41,8 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   // `null` enquanto carrega: sem isso, a tela piscaria "0 de 3 restantes" e
   // bloquearia o botão por um instante em toda visita.
   const [usosNaJanela, setUsosNaJanela] = useState<string[] | null>(null)
+  // O mesmo cuidado pro medidor mensal do Premium.
+  const [usoPremium, setUsoPremium] = useState<UsoIA[] | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -49,12 +56,35 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
     }
   }, [user, sucesso])
 
+  // O Premium não tem limite de arquivos, mas tem teto de páginas por mês.
+  // Só busca pra quem é Premium: pra conta gratuita a consulta não serviria
+  // pra nada e ainda custaria uma ida ao banco em toda visita.
+  const ehPremium = temPremium(perfil)
+  useEffect(() => {
+    if (!user || !ehPremium) return
+    let ativo = true
+    repo
+      .usoNoPeriodo(user.id, inicioDaJanelaPremium())
+      .then((usos) => ativo && setUsoPremium(usos))
+      .catch(() => ativo && setUsoPremium([]))
+    return () => {
+      ativo = false
+    }
+  }, [user, ehPremium, sucesso])
+
   if (!user) return null
 
   const cota = usosNaJanela === null ? null : situacaoPdf(perfil, usosNaJanela)
   const restantes = cota?.restantes ?? null
   const semPdfsRestantes = restantes === 0
   const paginasPermitidas = limitePaginas(perfil)
+
+  const cotaPremium = usoPremium === null ? null : situacaoPremium(perfil, usoPremium)
+  const noTetoPremium = cotaPremium?.noTeto ?? false
+  // Um único nome pros dois limites: eles nunca valem ao mesmo tempo (um é do
+  // plano gratuito, o outro do Premium), e o resto da tela só precisa saber se
+  // pode ou não aceitar um PDF agora.
+  const semCota = semPdfsRestantes || noTetoPremium
 
   /**
    * Ler as imagens das páginas só existe pra quem tem chave própria.
@@ -69,6 +99,9 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
   const usarImagens = lerImagens && temChavePropria
   const quandoRenova = cota?.renovaEm
     ? cota.renovaEm.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : null
+  const quandoRenovaPremium = cotaPremium?.renovaEm
+    ? cotaPremium.renovaEm.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
     : null
 
   /** Valida e salva uma única aula — usado tanto pelo .json manual quanto, em loop, pelo PDF (que pode gerar mais de uma). */
@@ -185,6 +218,14 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
         `Você já usou os ${LIMITE_PDF_GRATIS} PDFs dos últimos ${JANELA_PDF_DIAS} dias.` +
           (quandoRenova ? ` A próxima vaga abre em ${quandoRenova}.` : '') +
           ' Assine o Premium para converter sem limite.',
+      ])
+      return
+    }
+    if (noTetoPremium) {
+      setErrors([
+        `Você já converteu ${cotaPremium?.usadas} páginas com IA nos últimos ${JANELA_PREMIUM_DIAS} dias — o limite do Premium é de ${LIMITE_PAGINAS_PREMIUM_MES}.` +
+          (quandoRenovaPremium ? ` A cota volta a abrir em ${quandoRenovaPremium}.` : '') +
+          ' A importação de arquivos .json continua livre na outra aba.',
       ])
       return
     }
@@ -417,16 +458,57 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                 </span>
               </div>
             )}
+            {/* Medidor do Premium. Aparece sempre — e não só quando aperta —
+                porque um teto que a pessoa só descobre ao bater nele parece
+                pegadinha. Vendo o número subir, ela se organiza. */}
+            {cotaPremium && (
+              <div
+                className={`mb-3 flex items-start gap-2 rounded-lg p-3 text-xs ${
+                  cotaPremium.noTeto
+                    ? 'bg-amber-50 text-amber-900'
+                    : cotaPremium.restantes <= LIMITE_PAGINAS_PREMIUM_MES * 0.2
+                      ? 'bg-amber-50/60 text-amber-900'
+                      : 'bg-slate-50 text-slate-600'
+                }`}
+              >
+                <Crown className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                <span>
+                  {cotaPremium.noTeto ? (
+                    <>
+                      Você já converteu <strong>{cotaPremium.usadas} páginas</strong> com IA nos últimos{' '}
+                      {JANELA_PREMIUM_DIAS} dias — o limite do Premium é de {LIMITE_PAGINAS_PREMIUM_MES}.
+                      {quandoRenovaPremium && (
+                        <>
+                          {' '}
+                          A cota volta a abrir em <strong>{quandoRenovaPremium}</strong>.
+                        </>
+                      )}{' '}
+                      A importação de <strong>.json</strong> continua livre na outra aba.
+                    </>
+                  ) : (
+                    <>
+                      Premium: <strong>{cotaPremium.usadas}</strong> de {LIMITE_PAGINAS_PREMIUM_MES} páginas convertidas
+                      com IA nos últimos {JANELA_PREMIUM_DIAS} dias — resta{cotaPremium.restantes === 1 ? '' : 'm'}{' '}
+                      <strong>{cotaPremium.restantes}</strong>.
+                    </>
+                  )}
+                </span>
+              </div>
+            )}
             <label
               className={`flex flex-col items-center gap-2 rounded-lg border-2 border-dashed p-8 text-center ${
-                semPdfsRestantes
+                semCota
                   ? 'cursor-not-allowed border-slate-200 opacity-60'
                   : 'cursor-pointer border-slate-300 hover:border-brand-blue'
               }`}
             >
               <FileUp className="h-8 w-8 text-slate-400" strokeWidth={1.5} />
               <span className="text-sm font-medium text-slate-600">
-                {semPdfsRestantes ? 'Limite do plano gratuito atingido' : 'Toque para escolher um PDF'}
+                {semPdfsRestantes
+                  ? 'Limite do plano gratuito atingido'
+                  : noTetoPremium
+                    ? 'Limite mensal do Premium atingido'
+                    : 'Toque para escolher um PDF'}
               </span>
               {/* O tamanho aparece aqui, e não junto do aviso de cota, porque
                   quem é Premium não vê aquele aviso (não tem limite de
@@ -440,7 +522,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                 type="file"
                 accept="application/pdf"
                 className="hidden"
-                disabled={busy || semPdfsRestantes}
+                disabled={busy || semCota}
                 onChange={(e) => {
                   const file = e.target.files?.[0]
                   if (file) onPdfFile(file)

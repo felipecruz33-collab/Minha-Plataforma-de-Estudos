@@ -4,7 +4,17 @@ import { SYSTEM_PROMPT_GERAR_AULA } from '../src/lib/aiPrompt.js'
 import { AulaGeradaSchema } from '../src/lib/aiSchema.js'
 import { compilarAulas } from '../src/lib/lessonCompiler.js'
 import { extrairJson, normalizarSaidaIA } from '../src/lib/ai/normalizarSaidaIA.js'
-import { CHARS_POR_PAGINA, JANELA_PDF_DIAS, LIMITE_PDF_GRATIS, limitePaginas } from '../src/lib/premium.js'
+import {
+  CHARS_POR_PAGINA,
+  JANELA_PDF_DIAS,
+  JANELA_PREMIUM_DIAS,
+  LIMITE_PAGINAS_PREMIUM_MES,
+  LIMITE_PDF_GRATIS,
+  inicioDaJanelaPremium,
+  limitePaginas,
+  premiumBloqueado,
+  situacaoPremium,
+} from '../src/lib/premium.js'
 
 // Texto extraído do PDF vem em base64 do cliente; ~4.4MB é o limite prático
 // de corpo de requisição em funções serverless da Vercel — fica com folga.
@@ -1269,6 +1279,23 @@ async function arquivosNaJanela(usuario: Usuario, inicio: number): Promise<strin
   return [...new Set(dados.map((u) => u.arquivo))]
 }
 
+/**
+ * Linhas do medidor dentro da janela mensal do Premium.
+ *
+ * Traz `caracteres` além do nome: o teto do Premium é de PÁGINAS, não de
+ * arquivos, e página aqui é caractere convertido.
+ */
+async function usoNaJanelaPremium(usuario: Usuario, inicio: number): Promise<{ arquivo: string; caracteres: number; criadoEm: string }[]> {
+  const desde = inicioDaJanelaPremium()
+  const { res, dados } = await postJsonComTeto<{ arquivo: string; caracteres: number | null; criado_em: string }[]>(
+    `${SUPABASE_URL}/rest/v1/uso_ia?user_id=eq.${usuario.id}&criado_em=gte.${desde}&select=arquivo,caracteres,criado_em`,
+    { method: 'GET', headers: comoUsuario(usuario.token) },
+    inicio,
+  )
+  if (!res.ok || !Array.isArray(dados)) return []
+  return dados.map((u) => ({ arquivo: u.arquivo, caracteres: u.caracteres ?? 0, criadoEm: u.criado_em }))
+}
+
 /** Deixa o rastro do uso ANTES de chamar a IA — sem rastro, sem IA. */
 async function registrarUso(usuario: Usuario, arquivo: string, caracteres: number, inicio: number): Promise<void> {
   await postJsonComTeto(
@@ -1420,6 +1447,28 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
         responder(429, {
           ok: false,
           error: `Você já usou os ${LIMITE_PDF_GRATIS} PDFs dos últimos ${JANELA_PDF_DIAS} dias. Assine o Premium para converter sem limite.`,
+        })
+        return
+      }
+    } else {
+      // --- E o Premium, tem teto? ------------------------------------------
+      //
+      // Tem, e é de PÁGINAS por mês, não de arquivos. O custo da IA não cresce
+      // com o tempo, cresce com o uso: sem um número aqui, uma conta só pode
+      // gerar centenas de chamadas num fim de semana. 2.000 páginas são dez
+      // apostilas inteiras — quem passa disso não está estudando.
+      const usos = await usoNaJanelaPremium(usuario, inicio)
+      const cota = situacaoPremium(usuario, usos)
+      if (cota && premiumBloqueado(cota.usadas, usos.some((u) => u.arquivo === arquivo))) {
+        const quando = cota.renovaEm
+          ? cota.renovaEm.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' })
+          : null
+        responder(429, {
+          ok: false,
+          error:
+            `Você já converteu ${cota.usadas} páginas com IA nos últimos ${JANELA_PREMIUM_DIAS} dias — o limite do Premium é de ${LIMITE_PAGINAS_PREMIUM_MES}.` +
+            (quando ? ` A cota volta a abrir em ${quando}.` : '') +
+            ' A importação de arquivos .json continua livre.',
         })
         return
       }

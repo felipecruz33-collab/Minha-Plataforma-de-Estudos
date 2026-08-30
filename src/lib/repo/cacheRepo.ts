@@ -114,6 +114,12 @@ export class CachedRepository implements DataRepository {
     // memória. É chamada uma vez ao abrir a tela de importar, e é barata.
     return this.base.pdfsNoPeriodo(userId, desdeISO)
   }
+  usoNoPeriodo(userId: string, desdeISO: string) {
+    // Sem cache pelo mesmo motivo de `pdfsNoPeriodo`: `desdeISO` é "agora
+    // menos 30 dias", texto novo a cada milissegundo. Guardar isso seria
+    // encher a memória com chaves que nunca mais seriam consultadas.
+    return this.base.usoNoPeriodo(userId, desdeISO)
+  }
   listPerfis() {
     return this.ler('perfis', () => this.base.listPerfis())
   }
