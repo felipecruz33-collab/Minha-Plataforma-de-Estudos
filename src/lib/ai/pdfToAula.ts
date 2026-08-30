@@ -13,16 +13,134 @@ async function tokenDaSessao(): Promise<string | null> {
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
+/**
+ * Fontes que a apostila usa para dizer "isto é importante".
+ *
+ * O nome real da fonte ("Helvetica-Bold", "Arial-BoldMT") só aparece depois
+ * que a página carrega os objetos dela — daí o `getOperatorList()` antes de
+ * pedir o texto. Medido num PDF de 60 páginas: 285 ms sem isso, 374 ms com.
+ * São 89 ms a mais numa etapa que a IA depois faz esperar dezenas de segundos.
+ */
+const FONTE_NEGRITO = /bold|black|heavy|semibold|demibold/i
+
+/**
+ * A partir de quanto um texto maior que o corpo vira título.
+ *
+ * 1,25 porque abaixo disso a diferença costuma ser variação da própria fonte
+ * (uma linha com um símbolo mais alto, por exemplo), e marcar título demais é
+ * pior do que não marcar nenhum: perde-se justamente a informação de hierarquia
+ * que a marcação existe para dar.
+ */
+const FATOR_TITULO = 1.25
+
+/**
+ * Se mais que isto da página está em negrito, o negrito não significa nada.
+ *
+ * Apostilas inteiras compostas em fonte seminegrito existem. Nelas, marcar tudo
+ * entregaria à IA um sinal constante — que é o mesmo que sinal nenhum, só que
+ * gastando tokens.
+ */
+const LIMITE_NEGRITO_INUTIL = 0.4
+
+interface TrechoPdf {
+  texto: string
+  negrito: boolean
+  titulo: boolean
+}
+
+/** O tamanho de fonte mais frequente da página — o corpo do texto. */
+function tamanhoDoCorpo(alturas: number[]): number {
+  const contagem = new Map<number, number>()
+  for (const a of alturas) {
+    const chave = Math.round(a * 2) / 2
+    contagem.set(chave, (contagem.get(chave) ?? 0) + 1)
+  }
+  let corpo = 0
+  let maior = 0
+  for (const [altura, vezes] of contagem) {
+    if (vezes > maior) {
+      maior = vezes
+      corpo = altura
+    }
+  }
+  return corpo
+}
+
+/**
+ * Monta o texto da página marcando o que a apostila destacou.
+ *
+ * Trechos vizinhos com o mesmo destaque viram um marcador só: sem isso, texto
+ * com espaçamento entre letras sairia como `**A** **T** **E**`, que é ruído
+ * puro e ainda custa tokens.
+ */
+function montarTextoDaPagina(trechos: TrechoPdf[]): string {
+  const partes: string[] = []
+  let i = 0
+  while (i < trechos.length) {
+    const atual = trechos[i]
+    let junto = atual.texto
+    let j = i + 1
+    while (j < trechos.length && trechos[j].negrito === atual.negrito && trechos[j].titulo === atual.titulo) {
+      junto += ' ' + trechos[j].texto
+      j++
+    }
+    junto = junto.trim()
+    if (junto) {
+      if (atual.titulo) partes.push(`\n## ${junto}\n`)
+      else if (atual.negrito) partes.push(`**${junto}**`)
+      else partes.push(junto)
+    }
+    i = j
+  }
+  return partes.join(' ')
+}
+
 async function extractText(file: File): Promise<string[]> {
   const buffer = await file.arrayBuffer()
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise
   const pages: string[] = []
+
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i)
+
+    // Carrega as fontes da página. Se falhar, seguimos sem saber o que é
+    // negrito — o texto continua saindo inteiro, que é o que importa.
+    let sabeAsFontes = true
+    try {
+      await page.getOperatorList()
+    } catch {
+      sabeAsFontes = false
+    }
+
     const content = await page.getTextContent()
-    const text = content.items.map((item) => ('str' in item ? item.str : '')).join(' ')
-    pages.push(text)
+    const itens = content.items.filter((item): item is typeof item & { str: string } => 'str' in item)
+
+    const corpo = tamanhoDoCorpo(itens.filter((it) => it.str.trim()).map((it) => (it as any).height ?? 0))
+
+    const trechos: TrechoPdf[] = itens.map((item) => {
+      const altura: number = (item as any).height ?? 0
+      let negrito = false
+      if (sabeAsFontes) {
+        try {
+          const fonte = page.commonObjs.get((item as any).fontName)
+          negrito = FONTE_NEGRITO.test(fonte?.name ?? '')
+        } catch {
+          negrito = false
+        }
+      }
+      const titulo = corpo > 0 && altura >= corpo * FATOR_TITULO
+      return { texto: item.str, negrito: negrito && !titulo, titulo }
+    })
+
+    const comTexto = trechos.filter((t) => t.texto.trim())
+    const proporcaoNegrito = comTexto.length ? comTexto.filter((t) => t.negrito).length / comTexto.length : 0
+    if (proporcaoNegrito > LIMITE_NEGRITO_INUTIL) {
+      for (const t of trechos) t.negrito = false
+    }
+
+    pages.push(montarTextoDaPagina(trechos))
   }
+
   return pages
 }
 
