@@ -1,4 +1,4 @@
-import { Clock, ListChecks, Play, RotateCcw, Target, Trash2 } from 'lucide-react'
+import { Clock, ListChecks, Play, RotateCcw, Search, Target, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { QuestionCard } from '../components/QuestionCard'
 import { Button } from '../components/ui/Button'
@@ -6,8 +6,9 @@ import { Card } from '../components/ui/Card'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAuth } from '../lib/auth/AuthContext'
+import { contemTodasAsPalavras } from '../lib/buscarTexto'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
-import { repo, type MateriaComContagem } from '../lib/repo'
+import { repo, type AulaComQuestoes, type MateriaComContagem } from '../lib/repo'
 import type { Questao, Simulado, SimuladoMateria } from '../lib/types'
 
 function embaralhar<T>(arr: T[]): T[] {
@@ -46,7 +47,8 @@ interface ConfigAtiva {
 export default function Simulados() {
   const { user, perfil } = useAuth()
   const [materias, setMaterias] = useState<MateriaComContagem[]>([])
-  const [questoesPorMateria, setQuestoesPorMateria] = useState<Record<string, Questao[]>>({})
+  const [aulas, setAulas] = useState<AulaComQuestoes[]>([])
+  const [busca, setBusca] = useState('')
   const [historico, setHistorico] = useState<Simulado[] | null>(null)
   const [paraExcluir, setParaExcluir] = useState<Simulado | null>(null)
 
@@ -75,12 +77,9 @@ export default function Simulados() {
       async ([minhas, biblio]) => {
         const todas = [...minhas, ...biblio]
         setMaterias(todas)
-        const mapa: Record<string, Questao[]> = {}
-        for (const m of todas) {
-          const aulas = await repo.listAulas(m.id)
-          mapa[m.id] = aulas.flatMap((a) => a.questoes)
-        }
-        setQuestoesPorMateria(mapa)
+        // Uma consulta só. Antes era um `await` por matéria dentro de um laço:
+        // com 12 matérias, 12 idas ao servidor uma DEPOIS da outra.
+        setAulas(await repo.listAulasComQuestoes(todas.map((m) => m.id)))
       },
     )
     carregarHistorico()
@@ -93,20 +92,86 @@ export default function Simulados() {
     return () => clearInterval(t)
   }, [rodada])
 
-  const materiasComQuestoes = useMemo(() => materias.filter((m) => (questoesPorMateria[m.id]?.length ?? 0) > 0), [materias, questoesPorMateria])
+  /**
+   * As matérias que têm questões, cada uma com as aulas que têm questões.
+   *
+   * A escolha passou a ser POR AULA, e não por matéria: um simulado de
+   * "Português" sorteado do bolo inteiro quase nunca é o que a pessoa quer —
+   * quem está estudando crase quer as questões de crase, não uma amostra
+   * aleatória de tudo que já importou naquela matéria.
+   */
+  const grupos = useMemo(() => {
+    const porMateria = new Map<string, AulaComQuestoes[]>()
+    for (const a of aulas) {
+      if (a.questoes.length === 0) continue
+      const lista = porMateria.get(a.materiaId)
+      if (lista) lista.push(a)
+      else porMateria.set(a.materiaId, [a])
+    }
+    return materias
+      .map((m) => ({ materia: m, aulas: porMateria.get(m.id) ?? [] }))
+      .filter((g) => g.aulas.length > 0)
+  }, [materias, aulas])
+
+  /**
+   * A busca filtra por nome de matéria E de aula.
+   *
+   * Com a escolha por aula, a lista deixou de ter uma linha por matéria e
+   * passou a ter uma por aula — dezenas, às vezes centenas. Sem uma forma de
+   * chegar direto ao que se quer, a granularidade nova atrapalharia mais do
+   * que ajuda. Uma matéria cujo NOME casa com a busca aparece inteira; do
+   * contrário, aparece só com as aulas que casam.
+   */
+  const gruposVisiveis = useMemo(() => {
+    const termo = busca.trim()
+    if (!termo) return grupos
+    return grupos
+      .map((g) => {
+        if (contemTodasAsPalavras(g.materia.nome, termo)) return g
+        return { ...g, aulas: g.aulas.filter((a) => contemTodasAsPalavras(`${g.materia.nome} ${a.titulo}`, termo)) }
+      })
+      .filter((g) => g.aulas.length > 0)
+  }, [grupos, busca])
+
   const totalSelecionado = useMemo(() => Object.values(quantidades).reduce((a, b) => a + b, 0), [quantidades])
 
-  function definirQuantidade(materiaId: string, disponivel: number, valor: number) {
-    const clamped = Math.max(0, Math.min(disponivel, Math.floor(valor) || 0))
-    setQuantidades((q) => ({ ...q, [materiaId]: clamped }))
+  /** Quanto já foi escolhido dentro de uma matéria — mostrado no cabeçalho dela. */
+  function selecionadoNaMateria(g: { aulas: AulaComQuestoes[] }): number {
+    return g.aulas.reduce((n, a) => n + (quantidades[a.id] ?? 0), 0)
+  }
+
+  function definirQuantidade(aulaId: string, disponivel: number, valor: number) {
+    const limitado = Math.max(0, Math.min(disponivel, Math.floor(valor) || 0))
+    setQuantidades((q) => ({ ...q, [aulaId]: limitado }))
+  }
+
+  /** Marca (ou desmarca) todas as aulas visíveis de uma matéria de uma vez. */
+  function definirMateriaInteira(g: { aulas: AulaComQuestoes[] }, tudo: boolean) {
+    setQuantidades((q) => {
+      const novo = { ...q }
+      for (const a of g.aulas) novo[a.id] = tudo ? a.questoes.length : 0
+      return novo
+    })
   }
 
   function iniciar() {
-    const materiasEscolhidas = materiasComQuestoes
-      .filter((m) => (quantidades[m.id] ?? 0) > 0)
-      .map((m) => ({ materiaId: m.id, materiaNome: m.nome, quantidade: quantidades[m.id] }))
+    // O sorteio é por aula; o histórico continua sendo por matéria, então as
+    // aulas escolhidas são somadas de volta na matéria a que pertencem.
+    const porMateria = new Map<string, { materiaNome: string; quantidade: number }>()
+    const banco: Questao[] = []
 
-    const banco = materiasEscolhidas.flatMap((m) => embaralhar(questoesPorMateria[m.materiaId] ?? []).slice(0, m.quantidade))
+    for (const g of grupos) {
+      for (const a of g.aulas) {
+        const quantidade = quantidades[a.id] ?? 0
+        if (quantidade <= 0) continue
+        banco.push(...embaralhar(a.questoes).slice(0, quantidade))
+        const atual = porMateria.get(g.materia.id)
+        if (atual) atual.quantidade += quantidade
+        else porMateria.set(g.materia.id, { materiaNome: g.materia.nome, quantidade })
+      }
+    }
+
+    const materiasEscolhidas = Array.from(porMateria, ([materiaId, v]) => ({ materiaId, ...v }))
 
     setConfig({
       nome: nome.trim() || nomePadrao(),
@@ -262,7 +327,7 @@ export default function Simulados() {
 
   return (
     <div className="max-w-lg space-y-6">
-      {materiasComQuestoes.length === 0 ? (
+      {grupos.length === 0 ? (
         <EmptyState icon={ListChecks} title="Você precisa de matérias com questões para montar um simulado" />
       ) : (
         <Card className="space-y-4">
@@ -278,35 +343,85 @@ export default function Simulados() {
           </label>
 
           <div>
-            <span className="mb-1.5 block text-sm font-medium text-slate-600">Quantas questões de cada matéria</span>
-            <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
-              {materiasComQuestoes.map((m) => {
-                const disponivel = questoesPorMateria[m.id]?.length ?? 0
-                return (
-                  <div key={m.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-slate-700">{m.nome}</p>
-                      <button
-                        type="button"
-                        onClick={() => definirQuantidade(m.id, disponivel, disponivel)}
-                        className="text-xs text-brand-blue hover:underline"
-                      >
-                        {disponivel} disponíve{disponivel === 1 ? 'l' : 'is'} · usar todas
-                      </button>
+            <span className="mb-1.5 block text-sm font-medium text-slate-600">Quantas questões de cada aula</span>
+
+            <label className="mb-2 flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 focus-within:border-brand-blue">
+              <Search className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.75} />
+              <input
+                type="text"
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                placeholder="Procurar matéria ou aula…"
+                className="w-full text-sm outline-none"
+              />
+            </label>
+
+            {gruposVisiveis.length === 0 ? (
+              <p className="rounded-lg border border-slate-200 px-3 py-4 text-center text-sm text-slate-400">
+                Nada encontrado para "{busca.trim()}".
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {gruposVisiveis.map((g) => {
+                  const escolhidasAqui = selecionadoNaMateria(g)
+                  const disponivelNaMateria = g.aulas.reduce((n, a) => n + a.questoes.length, 0)
+                  return (
+                    <div key={g.materia.id} className="overflow-hidden rounded-lg border border-slate-200">
+                      <div className="flex items-center justify-between gap-3 bg-slate-50 px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-navy">{g.materia.nome}</p>
+                          <p className="text-xs text-slate-400">
+                            {escolhidasAqui} de {disponivelNaMateria} selecionadas
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => definirMateriaInteira(g, escolhidasAqui !== disponivelNaMateria)}
+                          className="shrink-0 text-xs font-medium text-brand-blue hover:underline"
+                        >
+                          {escolhidasAqui === disponivelNaMateria ? 'limpar' : 'usar todas'}
+                        </button>
+                      </div>
+
+                      <div className="divide-y divide-slate-100">
+                        {g.aulas.map((a) => {
+                          const disponivel = a.questoes.length
+                          return (
+                            <div key={a.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm text-slate-700">{a.titulo}</p>
+                                <button
+                                  type="button"
+                                  onClick={() => definirQuantidade(a.id, disponivel, disponivel)}
+                                  className="text-xs text-slate-400 hover:text-brand-blue hover:underline"
+                                >
+                                  {disponivel} disponíve{disponivel === 1 ? 'l' : 'is'}
+                                </button>
+                              </div>
+                              <input
+                                type="number"
+                                min={0}
+                                max={disponivel}
+                                value={quantidades[a.id] ?? 0}
+                                onChange={(e) => definirQuantidade(a.id, disponivel, Number(e.target.value))}
+                                className="w-16 shrink-0 rounded-lg border border-slate-300 px-2 py-1.5 text-center text-sm outline-none focus:border-brand-blue"
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>
                     </div>
-                    <input
-                      type="number"
-                      min={0}
-                      max={disponivel}
-                      value={quantidades[m.id] ?? 0}
-                      onChange={(e) => definirQuantidade(m.id, disponivel, Number(e.target.value))}
-                      className="w-16 shrink-0 rounded-lg border border-slate-300 px-2 py-1.5 text-center text-sm outline-none focus:border-brand-blue"
-                    />
-                  </div>
-                )
-              })}
-            </div>
-            <p className="mt-1.5 text-xs text-slate-400">{totalSelecionado} questão{totalSelecionado !== 1 ? 'ões' : ''} selecionada{totalSelecionado !== 1 ? 's' : ''} no total</p>
+                  )
+                })}
+              </div>
+            )}
+
+            <p className="mt-1.5 text-xs text-slate-400">
+              {/* A palavra inteira muda no plural ("questão" -> "questões"),
+                  então não dá pra só grudar um sufixo: virava "questãoões". */}
+              {totalSelecionado} {totalSelecionado === 1 ? 'questão selecionada' : 'questões selecionadas'} no total
+              {busca.trim() && ' (a busca só esconde a lista — o que já foi escolhido continua valendo)'}
+            </p>
           </div>
 
           <div>
