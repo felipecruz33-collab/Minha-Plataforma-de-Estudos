@@ -58,6 +58,8 @@ Cada bloco tem um "tipo" e, dependendo do tipo, os campos abaixo:
 - "naoconfunda": comparação entre dois conceitos parecidos. Use "conteudo", ou "colunas"/"linhas" se fizer mais sentido como tabela.
 - "tabela": dados tabulares. Use "colunas" (lista de cabeçalhos) e "linhas" (lista de listas, mesma quantidade de valores que colunas).
 - Use as caixas coloridas (dica/alerta/memorize/exemplo/palavra/naoconfunda) com parcimônia: só quando forem realmente úteis. A maior parte do conteúdo deve ser blocos "texto".
+- REGRA DURA: todo bloco precisa do conteúdo que o tipo dele exige. Um título sozinho só vale no tipo "texto". Nunca devolva {"tipo":"dica","titulo":"Dica"} sem "conteudo", nem "memorize" sem "itens", nem "tabela" sem "colunas" e "linhas". Um título de seção da apostila, sem texto embaixo, é um bloco "texto" — não é uma dica.
+- Os marcadores "##" e "**" existem só no texto que você RECEBE. Não os escreva na saída: o título de um tópico vai no campo "titulo", e o destaque dentro do conteúdo usa **negrito** normalmente.
 
 QUESTÕES (campo "aula.questoes" de cada aula)
 - REGRA ABSOLUTA: preserve todas as questões presentes no texto daquela aula, com enunciado e alternativas fiéis ao original. Nunca corte, resuma ou invente alternativas ou gabaritos.

@@ -185,11 +185,10 @@ function normalizarBloco(b: unknown): Record<string, unknown> | null {
   }
 
   // Espelha exatamente a regra do schema (`BlocoIntermediateSchema.refine`):
-  // um bloco sem conteúdo suficiente pro próprio tipo reprova a aula INTEIRA
-  // lá na frente. Descartar só ele aqui salva o resto — e um bloco vazio não
-  // tem nada pra mostrar de qualquer jeito.
+  // um bloco que não satisfaz o próprio tipo reprova a aula INTEIRA lá na
+  // frente.
   const temTabela = !!(colunas.length && linhas.length)
-  const aproveitavel =
+  const serveNoTipo =
     tipo === 'tabela'
       ? temTabela
       : tipo === 'texto'
@@ -197,7 +196,28 @@ function normalizarBloco(b: unknown): Record<string, unknown> | null {
         : tipo === 'naoconfunda'
           ? !!(conteudo || itens.length || temTabela)
           : !!(conteudo || itens.length)
-  if (!aproveitavel) return null
+
+  if (!serveNoTipo) {
+    // REBAIXA em vez de descartar, quando ainda há o que mostrar.
+    //
+    // Isto aconteceu de verdade: a IA passou a devolver blocos tipados só com
+    // título ({"tipo":"dica","titulo":"Dica de prova"}), sem conteúdo. Cada um
+    // reprovava, o normalizador descartava todos, a aula ficava sem bloco
+    // nenhum e a importação falhava inteira — em qualquer PDF.
+    //
+    // Um bloco "dica" sem texto não pode ser uma caixa de dica, mas um título
+    // ainda é informação: vira "texto", que aceita título sozinho. É a mesma
+    // degradação honesta já aplicada a tipos desconhecidos — perde-se a cor
+    // da caixa, não o conteúdo.
+    if (!titulo && !conteudo && !subtopicos.length && !itens.length && !temTabela) return null
+    bloco.tipo = 'texto'
+    if (itens.length && !conteudo) {
+      // Itens num tipo que não os aceita viram uma lista em texto, senão
+      // sumiriam junto com o tipo original.
+      bloco.conteudo = itens.map((i) => `• ${i}`).join('\n')
+      delete bloco.itens
+    }
+  }
 
   return bloco
 }
@@ -205,7 +225,11 @@ function normalizarBloco(b: unknown): Record<string, unknown> | null {
 function normalizarAula(a: unknown): Record<string, unknown> | null {
   if (!ehObjeto(a)) return null
   const blocos = comoLista(a.blocos ?? a.conteudo).map(normalizarBloco).filter(Boolean)
-  if (!blocos.length) return null
+  const temQuestoes = comoLista(a.questoes ?? a.questions).length > 0
+  // Aula sem bloco nenhum ainda vale se tiver questões: um PDF que é só banco
+  // de questões não tem teoria pra extrair, e recusá-lo seria recusar
+  // conteúdo perfeitamente útil.
+  if (!blocos.length && !temQuestoes) return null
   const titulo = comoTexto(a.titulo ?? a.nome).trim() || 'Aula'
   return {
     titulo,
