@@ -65,7 +65,15 @@ export interface DataRepository {
 
   listAulas(materiaId: string): Promise<Aula[]>
   getAula(aulaId: string): Promise<Aula | null>
-  upsertAula(userId: string, payload: AulaImportPayload, opts: { isBiblioteca: boolean }): Promise<Aula>
+  upsertAula(
+    userId: string,
+    payload: AulaImportPayload,
+    opts: {
+      isBiblioteca: boolean
+      /** Marca a aula como cópia da biblioteca — ver `Aula.daBiblioteca`. */
+      daBiblioteca?: boolean
+    },
+  ): Promise<Aula>
   deleteAula(aulaId: string): Promise<void>
   renomearAula(aulaId: string, titulo: string): Promise<Aula>
   /** Grava a ordem das aulas de uma matéria, na sequência em que os ids vierem. */

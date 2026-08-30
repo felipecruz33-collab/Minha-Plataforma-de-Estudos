@@ -10,7 +10,7 @@ import { Button } from '../components/ui/Button'
 import { TIPO_BLOCO_LABEL } from '../lib/blocoLabels'
 import { TIPO_BLOCO_ICON, TIPO_BLOCO_ICON_COR } from '../lib/blocoStyle'
 import { useAuth } from '../lib/auth/AuthContext'
-import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
+import { podeVerBiblioteca as calcPodeVerBiblioteca, temPremium } from '../lib/premium'
 import { repo } from '../lib/repo'
 import { TIPOS_COM_ABA, type Aula, type Materia } from '../lib/types'
 
@@ -49,6 +49,35 @@ export default function AulaDetail() {
   if (aula === null) return <EmptyState icon={FileQuestion} title="Aula não encontrada" />
 
   const isBiblioteca = !!materia?.isBiblioteca
+
+  /**
+   * Cópia da biblioteca numa conta que não tem mais Premium.
+   *
+   * A aula continua aparecendo, com o título — o que não vem é o conteúdo, e
+   * quem decide isso é a RLS do banco. Aqui a tela só EXPLICA: sem esta
+   * mensagem a pessoa abriria uma aula vazia e concluiria que perdeu o que
+   * tinha, que é indistinguível de um bug e o caminho mais curto pra uma
+   * avaliação de uma estrela.
+   */
+  if (aula.daBiblioteca && !temPremium(perfil)) {
+    return (
+      <div>
+        <Link to=".." relative="path" className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-navy">
+          <ArrowLeft className="h-4 w-4" strokeWidth={1.75} />
+          Voltar
+        </Link>
+        <EmptyState icon={Lock} title={aula.titulo}>
+          <p className="mx-auto mb-4 max-w-sm text-sm text-slate-500">
+            Esta aula veio da <strong>Biblioteca compartilhada</strong>, que faz parte do Premium. O conteúdo dela
+            fica guardado e volta inteiro — com as suas respostas — assim que a assinatura for reativada.
+          </p>
+          <Link to="/premium">
+            <Button>Reativar o Premium</Button>
+          </Link>
+        </EmptyState>
+      </div>
+    )
+  }
 
   if (isBiblioteca && !podeVerBiblioteca) {
     return (

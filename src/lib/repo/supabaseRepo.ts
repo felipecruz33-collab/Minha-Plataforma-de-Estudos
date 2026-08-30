@@ -110,6 +110,7 @@ export class SupabaseRepository implements DataRepository {
       materiaId: row.materia_id,
       titulo: row.titulo,
       ordem: row.ordem ?? null,
+      daBiblioteca: !!row.da_biblioteca,
       criadoEm: row.criado_em,
       atualizadoEm: row.atualizado_em,
       // A ordem vinha do `order` da consulta; agora que os blocos chegam
@@ -197,7 +198,11 @@ export class SupabaseRepository implements DataRepository {
     return materiaIds.flatMap((id) => ordenarAulas(porMateria.get(id) ?? []))
   }
 
-  async upsertAula(userId: string, payload: AulaImportPayload, opts: { isBiblioteca: boolean }): Promise<Aula> {
+  async upsertAula(
+    userId: string,
+    payload: AulaImportPayload,
+    opts: { isBiblioteca: boolean; daBiblioteca?: boolean },
+  ): Promise<Aula> {
     const db = this.db()
 
     let { data: materia } = await db
@@ -222,13 +227,21 @@ export class SupabaseRepository implements DataRepository {
     if (!aula) {
       const { data: novaAula, error } = await db
         .from('aulas')
-        .insert({ materia_id: materia.id, titulo: payload.aula.titulo })
+        .insert({ materia_id: materia.id, titulo: payload.aula.titulo, da_biblioteca: !!opts.daBiblioteca })
         .select()
         .single()
       if (error) throw error
       aula = novaAula
     } else {
-      const { error } = await db.from('aulas').update({ atualizado_em: new Date().toISOString() }).eq('id', aula.id)
+      const { error } = await db
+        .from('aulas')
+        .update({
+          atualizado_em: new Date().toISOString(),
+          // Só LIGA: o gatilho do banco recusa desligar, e mandar `false` numa
+          // aula já marcada seria uma tentativa silenciosa de destravar.
+          ...(opts.daBiblioteca ? { da_biblioteca: true } : {}),
+        })
+        .eq('id', aula.id)
       if (error) throw error
       await db.from('blocos').delete().eq('aula_id', aula.id)
       await db.from('questoes').delete().eq('aula_id', aula.id)
@@ -538,7 +551,13 @@ export class SupabaseRepository implements DataRepository {
               })),
             },
           },
-          { isBiblioteca: !!opts.paraBiblioteca },
+          {
+            isBiblioteca: !!opts.paraBiblioteca,
+            // A marca viaja no backup. Sem isto, exportar antes de cancelar e
+            // reimportar depois lavaria o conteúdo da biblioteca — e o
+            // bloqueio inteiro viraria fachada.
+            daBiblioteca: !opts.paraBiblioteca && aula.daBiblioteca,
+          },
         )
       }
     }

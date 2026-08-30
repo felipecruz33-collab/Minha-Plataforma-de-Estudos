@@ -3,8 +3,14 @@ import type { Aula } from './types'
 
 /**
  * Copia uma aula da Biblioteca compartilhada para a área pessoal do usuário.
+ *
  * Cria uma cópia independente: alterações/exclusões feitas por ele depois
  * (em "Início — Matérias") nunca afetam o item original da Biblioteca.
+ *
+ * A cópia nasce MARCADA como vinda da biblioteca. Sem Premium o título
+ * continua visível, mas o conteúdo não é entregue — quem aplica isso é a RLS
+ * do banco (migração 0016), e um gatilho impede que a marca seja desligada.
+ * Sem isso, bastaria assinar um mês, copiar a biblioteca inteira e cancelar.
  */
 export async function copiarAulaParaMinhaBiblioteca(userId: string, aula: Aula, materiaNome: string) {
   return repo.upsertAula(
@@ -27,6 +33,6 @@ export async function copiarAulaParaMinhaBiblioteca(userId: string, aula: Aula, 
         })),
       },
     },
-    { isBiblioteca: false },
+    { isBiblioteca: false, daBiblioteca: true },
   )
 }
