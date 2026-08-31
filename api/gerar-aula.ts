@@ -1450,8 +1450,11 @@ async function processarPedido(req: VercelRequest, responder: Responder) {
         })
         return
       }
-    } else {
+    } else if (!usuario.isAdmin) {
       // --- E o Premium, tem teto? ------------------------------------------
+      //
+      // O administrador fica de fora: o teto existe pra proteger a conta de IA
+      // de um assinante entusiasmado, e a conta é do administrador.
       //
       // Tem, e é de PÁGINAS por mês, não de arquivos. O custo da IA não cresce
       // com o tempo, cresce com o uso: sem um número aqui, uma conta só pode

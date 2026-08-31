@@ -126,8 +126,8 @@ export function paginasDeCaracteres(caracteres: number): number {
 export interface SituacaoPremium {
   /** Páginas já convertidas dentro da janela. */
   usadas: number
-  /** Quantas ainda cabem — 0 quando o teto foi atingido. */
-  restantes: number
+  /** Quantas ainda cabem — 0 no teto, `null` para quem não tem teto. */
+  restantes: number | null
   limite: number
   noTeto: boolean
   /** Quando a cota volta a abrir. Só faz sentido quando `noTeto`. */
@@ -152,6 +152,14 @@ export function situacaoPremium(
 
   const caracteres = usos.reduce((soma, u) => soma + (u.caracteres || 0), 0)
   const usadas = paginasDeCaracteres(caracteres)
+
+  // O administrador não tem teto: o limite existe pra proteger a conta de IA,
+  // e a conta é dele. Continua vendo o medidor, porque saber quanto já gastou
+  // é justamente o que ele precisa pra decidir o número dos outros.
+  if (perfil?.isAdmin) {
+    return { usadas, restantes: null, limite: LIMITE_PAGINAS_PREMIUM_MES, noTeto: false, renovaEm: null }
+  }
+
   const restantes = Math.max(0, LIMITE_PAGINAS_PREMIUM_MES - usadas)
   const base = { usadas, restantes, limite: LIMITE_PAGINAS_PREMIUM_MES }
   if (restantes > 0 || usos.length === 0) return { ...base, noTeto: false, renovaEm: null }
