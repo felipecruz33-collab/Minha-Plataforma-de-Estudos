@@ -466,14 +466,20 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                 className={`mb-3 flex items-start gap-2 rounded-lg p-3 text-xs ${
                   cotaPremium.noTeto
                     ? 'bg-amber-50 text-amber-900'
-                    : cotaPremium.restantes <= LIMITE_PAGINAS_PREMIUM_MES * 0.2
+                    : cotaPremium.restantes !== null && cotaPremium.restantes <= LIMITE_PAGINAS_PREMIUM_MES * 0.2
                       ? 'bg-amber-50/60 text-amber-900'
                       : 'bg-slate-50 text-slate-600'
                 }`}
               >
                 <Crown className="h-4 w-4 shrink-0" strokeWidth={1.75} />
                 <span>
-                  {cotaPremium.noTeto ? (
+                  {cotaPremium.restantes === null ? (
+                    <>
+                      Administrador: <strong>{cotaPremium.usadas} páginas</strong> convertidas com IA nos últimos{' '}
+                      {JANELA_PREMIUM_DIAS} dias — <strong>sem teto</strong>. Assinantes param em{' '}
+                      {LIMITE_PAGINAS_PREMIUM_MES}.
+                    </>
+                  ) : cotaPremium.noTeto ? (
                     <>
                       Você já converteu <strong>{cotaPremium.usadas} páginas</strong> com IA nos últimos{' '}
                       {JANELA_PREMIUM_DIAS} dias — o limite do Premium é de {LIMITE_PAGINAS_PREMIUM_MES}.

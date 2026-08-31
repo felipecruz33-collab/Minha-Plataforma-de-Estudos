@@ -27,6 +27,12 @@ function ehObjeto(v: unknown): v is Record<string, unknown> {
 function comoTexto(v: unknown): string {
   if (typeof v === 'string') return v
   if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  // Um campo de texto que veio como LISTA de pedaços ("conteudo": ["p1","p2"])
+  // é mania comum de modelo, e devolver "" aqui apagava o bloco inteiro: ele
+  // ficava sem conteúdo, era descartado, e a importação falhava com um erro
+  // que não dizia nada sobre a causa. Emendar os pedaços não inventa nada —
+  // o texto é o que a IA escreveu, na ordem em que escreveu.
+  if (Array.isArray(v)) return v.map(comoTexto).filter(Boolean).join('\n')
   return ''
 }
 
@@ -145,8 +151,17 @@ function textoDeHtml(v: unknown): string {
     .trim()
 }
 
-function normalizarBloco(b: unknown): Record<string, unknown> | null {
-  if (!ehObjeto(b)) return null
+/**
+ * Um bloco da IA vira ZERO, UM ou DOIS blocos do nosso formato.
+ *
+ * Dois quando o bloco traz uma tabela que o próprio tipo não sabe desenhar:
+ * só `tabela` e `naoconfunda` desenham tabela em `lessonCompiler`. Antes, uma
+ * tabela dentro de um "memorize" simplesmente sumia na compilação — e quando
+ * ela era o ÚNICO conteúdo do bloco, o bloco virava "texto" vazio e derrubava
+ * a importação inteira. Agora a tabela sai como bloco próprio, logo depois.
+ */
+function normalizarBloco(b: unknown): Record<string, unknown>[] {
+  if (!ehObjeto(b)) return []
   // "Não Confunda", "nao-confunda", "NAOCONFUNDA" -> "naoconfunda"
   const tipoBruto = comoTexto(b.tipo)
     .trim()
@@ -179,15 +194,19 @@ function normalizarBloco(b: unknown): Record<string, unknown> | null {
     // tabela; ajusta o tamanho em vez de descartar a aula.
     .map((l) => (colunas.length ? [...l, ...Array(Math.max(0, colunas.length - l.length)).fill('')].slice(0, colunas.length) : l))
     .filter((l) => l.length > 0)
-  if (colunas.length && linhas.length) {
+  const temTabela = !!(colunas.length && linhas.length)
+  // A tabela fica no próprio bloco só se o tipo souber desenhá-la; senão sai
+  // separada, no fim, pra não ser perdida na compilação.
+  const tabelaNoBloco = temTabela && (tipo === 'tabela' || tipo === 'naoconfunda')
+  if (tabelaNoBloco) {
     bloco.colunas = colunas
     bloco.linhas = linhas
   }
+  const blocoTabela = temTabela && !tabelaNoBloco ? { tipo: 'tabela', colunas, linhas } : null
 
   // Espelha exatamente a regra do schema (`BlocoIntermediateSchema.refine`):
   // um bloco que não satisfaz o próprio tipo reprova a aula INTEIRA lá na
   // frente.
-  const temTabela = !!(colunas.length && linhas.length)
   const serveNoTipo =
     tipo === 'tabela'
       ? temTabela
@@ -209,7 +228,12 @@ function normalizarBloco(b: unknown): Record<string, unknown> | null {
     // ainda é informação: vira "texto", que aceita título sozinho. É a mesma
     // degradação honesta já aplicada a tipos desconhecidos — perde-se a cor
     // da caixa, não o conteúdo.
-    if (!titulo && !conteudo && !subtopicos.length && !itens.length && !temTabela) return null
+    // Sem nada além da tabela, o bloco tipado não sobra: a tabela já vai
+    // sair sozinha logo abaixo. Rebaixar pra "texto" aqui era o bug — "texto"
+    // não aceita tabela, então o bloco vazio reprovava a aula inteira.
+    if (!titulo && !conteudo && !subtopicos.length && !itens.length) {
+      return blocoTabela ? [blocoTabela] : []
+    }
     bloco.tipo = 'texto'
     if (itens.length && !conteudo) {
       // Itens num tipo que não os aceita viram uma lista em texto, senão
@@ -219,12 +243,12 @@ function normalizarBloco(b: unknown): Record<string, unknown> | null {
     }
   }
 
-  return bloco
+  return blocoTabela ? [bloco, blocoTabela] : [bloco]
 }
 
 function normalizarAula(a: unknown): Record<string, unknown> | null {
   if (!ehObjeto(a)) return null
-  const blocos = comoLista(a.blocos ?? a.conteudo).map(normalizarBloco).filter(Boolean)
+  const blocos = comoLista(a.blocos ?? a.conteudo).flatMap(normalizarBloco)
   const temQuestoes = comoLista(a.questoes ?? a.questions).length > 0
   // Aula sem bloco nenhum ainda vale se tiver questões: um PDF que é só banco
   // de questões não tem teoria pra extrair, e recusá-lo seria recusar
@@ -263,8 +287,13 @@ export function normalizarSaidaIA(bruto: unknown, materiaPadrao = ''): unknown {
         : bruto
 
   const aulas = comoLista(cru.aulas).map(normalizarAula).filter(Boolean)
-  if (!aulas.length) return bruto
 
+  // Mesmo sem nenhuma aula aproveitável, devolve a FORMA certa em vez do
+  // objeto bruto. Devolvendo o bruto, o schema reprovava o JSON original e a
+  // mensagem que chegava na tela apontava um bloco qualquer ("blocos.0: bloco
+  // sem conteúdo suficiente") — um sintoma, não a causa. Com a forma certa, o
+  // erro diz o que de fato aconteceu, e o reparo automático recebe uma
+  // instrução que dá pra cumprir.
   return {
     materia: comoTexto(cru.materia ?? cru.disciplina).trim() || materiaPadrao.trim() || 'Geral',
     aulas,

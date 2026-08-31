@@ -80,7 +80,7 @@ const AulaIntermediateSchema = z
 
 export const AulaGeradaIntermediateSchema = z.object({
   materia: z.string().min(1),
-  aulas: z.array(AulaIntermediateSchema).min(1),
+  aulas: z.array(AulaIntermediateSchema).min(1, 'a IA não devolveu nenhuma aula aproveitável'),
 })
 
 export type AulaGeradaIntermediate = z.infer<typeof AulaGeradaIntermediateSchema>
