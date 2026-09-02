@@ -33,6 +33,21 @@ export interface BackupData {
  * `Aula` com `blocos: []`, evita que alguém confie num campo vazio achando que
  * a aula não tem conteúdo.
  */
+/**
+ * A aula sem o conteúdo: só o que uma lista precisa pra mostrar o nome.
+ *
+ * Existe pra quem só monta listas — o cronograma, por exemplo. Sem isto a
+ * alternativa era trazer as aulas COM as questões (ou pior, com os blocos), o
+ * que é baixar megabytes pra escrever um título na tela.
+ */
+export interface AulaBasica {
+  id: string
+  materiaId: string
+  titulo: string
+  ordem: number | null
+  criadoEm: string
+}
+
 export interface AulaComQuestoes {
   id: string
   materiaId: string
@@ -85,6 +100,15 @@ export interface DataRepository {
    * ordenadas dentro de cada matéria e na ordem em que as matérias vieram.
    */
   listAulasComQuestoes(materiaIds: string[]): Promise<AulaComQuestoes[]>
+
+  /**
+   * Aulas de VÁRIAS matérias numa consulta só, sem questões e sem blocos.
+   *
+   * Uma chamada, não uma por matéria: pedir em laço vira uma viagem de rede
+   * por matéria, todas enfileiradas, e o tempo de abrir a tela passa a crescer
+   * junto com o número de matérias da pessoa.
+   */
+  listAulasBasicas(materiaIds: string[]): Promise<AulaBasica[]>
 
   /**
    * Tira uma questão do banco de vez.

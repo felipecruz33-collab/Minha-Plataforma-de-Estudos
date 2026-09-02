@@ -2,7 +2,7 @@ import { supabase } from '../supabaseClient'
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
 import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
-import type { AulaComQuestoes, BackupData, DataRepository, MateriaComContagem } from './types'
+import type { AulaBasica, AulaComQuestoes, BackupData, DataRepository, MateriaComContagem } from './types'
 
 function questaoDaLinha(q: any): Questao {
   return {
@@ -195,6 +195,24 @@ export class SupabaseRepository implements DataRepository {
     }
     // Cada matéria ordenada por conta própria, na ordem em que as matérias
     // foram pedidas — é assim que a tela espera montar o segundo select.
+    return materiaIds.flatMap((id) => ordenarAulas(porMateria.get(id) ?? []))
+  }
+
+  async listAulasBasicas(materiaIds: string[]): Promise<AulaBasica[]> {
+    const linhas = await this.aulasDeMaterias(materiaIds, 'id, materia_id, titulo, ordem, criado_em')
+    const porMateria = new Map<string, AulaBasica[]>()
+    for (const row of linhas) {
+      const aula: AulaBasica = {
+        id: row.id,
+        materiaId: row.materia_id,
+        titulo: row.titulo,
+        ordem: row.ordem ?? null,
+        criadoEm: row.criado_em,
+      }
+      const lista = porMateria.get(aula.materiaId)
+      if (lista) lista.push(aula)
+      else porMateria.set(aula.materiaId, [aula])
+    }
     return materiaIds.flatMap((id) => ordenarAulas(porMateria.get(id) ?? []))
   }
 

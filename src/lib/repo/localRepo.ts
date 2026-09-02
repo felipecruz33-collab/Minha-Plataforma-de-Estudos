@@ -1,7 +1,7 @@
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
 import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
-import type { AulaComQuestoes, BackupData, DataRepository, MateriaComContagem } from './types'
+import type { AulaBasica, AulaComQuestoes, BackupData, DataRepository, MateriaComContagem } from './types'
 
 const STORAGE_KEY = 'mpe:v1'
 
@@ -338,6 +338,20 @@ export class LocalRepository implements DataRepository {
     return primeiraDataPorArquivo(
       s.geracoes.filter((g) => g.userId === userId && g.criadoEm >= desdeISO).map((g) => ({ nome: g.nomeArquivo, data: g.criadoEm })),
     )
+  }
+
+  async listAulasBasicas(materiaIds: string[]): Promise<AulaBasica[]> {
+    const s = load()
+    const pedidas = new Set(materiaIds)
+    const porMateria = new Map<string, AulaBasica[]>()
+    for (const a of s.aulas) {
+      if (!pedidas.has(a.materiaId)) continue
+      const basica: AulaBasica = { id: a.id, materiaId: a.materiaId, titulo: a.titulo, ordem: a.ordem, criadoEm: a.criadoEm }
+      const lista = porMateria.get(a.materiaId)
+      if (lista) lista.push(basica)
+      else porMateria.set(a.materiaId, [basica])
+    }
+    return materiaIds.flatMap((id) => ordenarAulas(porMateria.get(id) ?? []))
   }
 
   async usoNoPeriodo(userId: string, desdeISO: string): Promise<UsoIA[]> {

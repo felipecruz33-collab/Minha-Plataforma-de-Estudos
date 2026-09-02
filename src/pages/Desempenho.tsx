@@ -1,6 +1,7 @@
 import { BarChart3, CalendarRange, Minus, TrendingDown, TrendingUp } from 'lucide-react'
 import { useMemo, useEffect, useState } from 'react'
 import { Card } from '../components/ui/Card'
+import { CarregarMais } from '../components/ui/CarregarMais'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAuth } from '../lib/auth/AuthContext'
 import {
@@ -10,6 +11,7 @@ import {
   type EventoExtrato,
   type ProjecaoMateria,
 } from '../lib/acompanhamento'
+import { useListaVisivel } from '../lib/hooks/useListaVisivel'
 import { useTodasQuestoes } from '../lib/hooks/useTodasQuestoes'
 import { repo } from '../lib/repo'
 import type { Resposta } from '../lib/types'
@@ -147,6 +149,17 @@ export default function Desempenho() {
     return projecaoPorMateria({ respostas, totalPorMateria, materiaNomePorId })
   }, [respostas, aulas, materias, materiaNomePorId])
 
+  /**
+   * "Por aula" e "por assunto" crescem com o acervo, não com a tela.
+   *
+   * Medido: com 288 aulas esta tela levava 1.977 ms para montar num celular,
+   * contra 664 ms com 36 — porque desenhava uma barra por aula, sem teto. As
+   * três primeiras seções cabem inteiras; estas duas entram por página.
+   */
+  const aulasVisiveis = useListaVisivel(porAula)
+  const assuntosVisiveis = useListaVisivel(porAssunto)
+  const projecaoVisivel = useListaVisivel(projecao)
+
   if (loading || respostas === null) return <p className="text-sm text-slate-400">Carregando…</p>
 
   if (respostas.length === 0) {
@@ -195,9 +208,15 @@ export default function Desempenho() {
         <section>
           <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">Projeção por disciplina</h2>
           <Card>
-            {projecao.map((p) => (
+            {projecaoVisivel.visiveis.map((p) => (
               <LinhaProjecao key={p.materiaId} p={p} />
             ))}
+            <CarregarMais
+              mostrando={projecaoVisivel.visiveis.length}
+              total={projecaoVisivel.total}
+              temMais={projecaoVisivel.temMais}
+              onVerMais={projecaoVisivel.verMais}
+            />
           </Card>
         </section>
       )}
@@ -209,12 +228,32 @@ export default function Desempenho() {
 
       <section>
         <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">Por aula</h2>
-        <Card>{porAula.map((g) => <Barra key={g.nome} grupo={g} />)}</Card>
+        <Card>
+          {aulasVisiveis.visiveis.map((g) => (
+            <Barra key={g.nome} grupo={g} />
+          ))}
+          <CarregarMais
+            mostrando={aulasVisiveis.visiveis.length}
+            total={aulasVisiveis.total}
+            temMais={aulasVisiveis.temMais}
+            onVerMais={aulasVisiveis.verMais}
+          />
+        </Card>
       </section>
 
       <section>
         <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">Por assunto</h2>
-        <Card>{porAssunto.map((g) => <Barra key={g.nome} grupo={g} />)}</Card>
+        <Card>
+          {assuntosVisiveis.visiveis.map((g) => (
+            <Barra key={g.nome} grupo={g} />
+          ))}
+          <CarregarMais
+            mostrando={assuntosVisiveis.visiveis.length}
+            total={assuntosVisiveis.total}
+            temMais={assuntosVisiveis.temMais}
+            onVerMais={assuntosVisiveis.verMais}
+          />
+        </Card>
       </section>
     </div>
   )
