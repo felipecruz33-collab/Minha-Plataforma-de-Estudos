@@ -1,4 +1,4 @@
-import { Clock, ListChecks, Play, RotateCcw, Search, Target, Trash2 } from 'lucide-react'
+import { BookMarked, Clock, ListChecks, Play, RotateCcw, Search, Sparkles, Target, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { QuestionCard } from '../components/QuestionCard'
 import { Button } from '../components/ui/Button'
@@ -7,9 +7,10 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAuth } from '../lib/auth/AuthContext'
 import { contemTodasAsPalavras } from '../lib/buscarTexto'
+import { montarCadernoMensal, ROTULO_NIVEL, type CadernoMensal } from '../lib/cadernoMensal'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo, type AulaComQuestoes, type MateriaComContagem } from '../lib/repo'
-import type { Questao, Simulado, SimuladoMateria } from '../lib/types'
+import type { Questao, Resposta, Simulado, SimuladoMateria } from '../lib/types'
 
 function embaralhar<T>(arr: T[]): T[] {
   const a = [...arr]
@@ -50,6 +51,7 @@ export default function Simulados() {
   const [aulas, setAulas] = useState<AulaComQuestoes[]>([])
   const [busca, setBusca] = useState('')
   const [historico, setHistorico] = useState<Simulado[] | null>(null)
+  const [respostas, setRespostas] = useState<Resposta[]>([])
   const [paraExcluir, setParaExcluir] = useState<Simulado | null>(null)
 
   const [nome, setNome] = useState(nomePadrao())
@@ -65,9 +67,40 @@ export default function Simulados() {
   const [confirmarEncerrar, setConfirmarEncerrar] = useState(false)
   const [salvo, setSalvo] = useState(false)
 
+  const caderno = useMemo(() => {
+    const questoes = aulas.flatMap((a) => a.questoes)
+    return montarCadernoMensal({ questoes, respostas })
+  }, [aulas, respostas])
+
+  /** Manda o caderno do mês direto pro mesmo motor que roda os simulados. */
+  function iniciarCaderno(cad: CadernoMensal) {
+    const porMateria = new Map<string, { materiaNome: string; quantidade: number }>()
+    for (const q of cad.questoes) {
+      const nomeMateria = materias.find((m) => m.id === q.materiaId)?.nome ?? 'Matéria'
+      const atual = porMateria.get(q.materiaId)
+      if (atual) atual.quantidade += 1
+      else porMateria.set(q.materiaId, { materiaNome: nomeMateria, quantidade: 1 })
+    }
+    setConfig({
+      nome: `${cad.rotulo} · ${ROTULO_NIVEL[cad.nivel.nivel]}`,
+      materias: Array.from(porMateria, ([materiaId, v]) => ({ materiaId, ...v })),
+      tempoLimiteSegundos: null,
+    })
+    // Já vem embaralhado e estável no mês — reembaralhar aqui quebraria isso.
+    setRodada(cad.questoes)
+    setRespostasStatus({})
+    setSalvo(false)
+    const agoraMs = Date.now()
+    setInicioEm(agoraMs)
+    setAgora(agoraMs)
+  }
+
   function carregarHistorico() {
     if (!user) return
     repo.listSimulados(user.id).then(setHistorico)
+    // O caderno do mês sai daqui: é o histórico de respostas que diz o nível
+    // e separa o que é revisão, reforço e inédito.
+    repo.listRespostas(user.id).then(setRespostas)
   }
 
   useEffect(() => {
@@ -327,6 +360,67 @@ export default function Simulados() {
 
   return (
     <div className="max-w-lg space-y-6">
+      {caderno && (
+        <Card className="space-y-3 border-brand-blue/30 bg-blue-50/40">
+          <div className="flex items-start gap-2.5">
+            <BookMarked className="mt-0.5 h-5 w-5 shrink-0 text-brand-blue" strokeWidth={1.75} />
+            <div className="min-w-0 flex-1">
+              <p className="flex flex-wrap items-center gap-2 font-bold text-navy">
+                {caderno.rotulo}
+                <span className="rounded-full bg-brand-blue px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">
+                  {ROTULO_NIVEL[caderno.nivel.nivel]}
+                </span>
+              </p>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {caderno.nivel.base === 'inicio' ? (
+                  <>
+                    Você ainda tem pouco histórico, então o caderno começa no nível iniciante. Ele sobe sozinho conforme
+                    você responde.
+                  </>
+                ) : (
+                  <>
+                    Seu nível vem de {caderno.nivel.pct}% de aproveitamento em {caderno.nivel.consideradas} questões
+                    {caderno.nivel.base === 'recente' ? ' nos últimos 30 dias' : ' no seu histórico'}.
+                  </>
+                )}
+              </p>
+            </div>
+          </div>
+
+          {/* A composição fica à mostra: é ela que muda de nível pra nível, e
+              esconder isso faria o caderno parecer um sorteio qualquer. */}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+            <span>
+              <strong className="text-navy">{caderno.questoes.length}</strong> questões
+            </span>
+            {caderno.composicao.revisao > 0 && (
+              <span>
+                <strong className="text-rose-600">{caderno.composicao.revisao}</strong> para recuperar
+              </span>
+            )}
+            {caderno.composicao.ineditas > 0 && (
+              <span>
+                <strong className="text-brand-blue">{caderno.composicao.ineditas}</strong> inéditas
+              </span>
+            )}
+            {caderno.composicao.reforco > 0 && (
+              <span>
+                <strong className="text-emerald-600">{caderno.composicao.reforco}</strong> de reforço
+              </span>
+            )}
+          </div>
+
+          <Button onClick={() => iniciarCaderno(caderno)} className="w-full">
+            <Sparkles className="h-4 w-4" strokeWidth={2} />
+            Começar o caderno do mês
+          </Button>
+          <p className="text-[11px] text-slate-400">
+            O caderno é o mesmo o mês inteiro — dá para parar e voltar. No mês que vem ele é remontado com o nível que
+            você tiver então.
+          </p>
+        </Card>
+      )}
+
       {grupos.length === 0 ? (
         <EmptyState icon={ListChecks} title="Você precisa de matérias com questões para montar um simulado" />
       ) : (
