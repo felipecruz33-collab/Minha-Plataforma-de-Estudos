@@ -1,10 +1,18 @@
-import { BarChart3 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { BarChart3, CalendarRange, Minus, TrendingDown, TrendingUp } from 'lucide-react'
+import { useMemo, useEffect, useState } from 'react'
 import { Card } from '../components/ui/Card'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAuth } from '../lib/auth/AuthContext'
-import { repo, type MateriaComContagem } from '../lib/repo'
-import type { Aula, Resposta } from '../lib/types'
+import {
+  extratoDeAcompanhamento,
+  projecaoPorMateria,
+  JANELA_DIAS,
+  type EventoExtrato,
+  type ProjecaoMateria,
+} from '../lib/acompanhamento'
+import { useTodasQuestoes } from '../lib/hooks/useTodasQuestoes'
+import { repo } from '../lib/repo'
+import type { Resposta } from '../lib/types'
 
 interface Grupo {
   nome: string
@@ -44,30 +52,75 @@ function agrupar(respostas: Resposta[], keyFn: (r: Resposta) => string, nomeFn: 
     .sort((a, b) => b.total - a.total)
 }
 
+/** Uma linha do extrato: data à esquerda, o que mudou à direita. */
+function LinhaExtrato({ evento }: { evento: EventoExtrato }) {
+  const Icone = evento.tom === 'bom' ? TrendingUp : evento.tom === 'ruim' ? TrendingDown : Minus
+  const cor = evento.tom === 'bom' ? 'text-emerald-600' : evento.tom === 'ruim' ? 'text-rose-600' : 'text-slate-400'
+  const [, mes, dia] = evento.em.split('-')
+  return (
+    <div className="flex gap-3 border-t border-slate-100 py-3 first:border-t-0 first:pt-0">
+      <span className="w-11 shrink-0 pt-0.5 text-xs font-semibold tabular-nums text-slate-400">
+        {dia}/{mes}
+      </span>
+      <Icone className={`mt-0.5 h-4 w-4 shrink-0 ${cor}`} strokeWidth={2} />
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold text-navy">{evento.titulo}</span>
+        <span className="mt-0.5 block text-xs text-slate-500">{evento.detalhe}</span>
+      </span>
+    </div>
+  )
+}
+
+function LinhaProjecao({ p }: { p: ProjecaoMateria }) {
+  const coberto = p.totalQuestoes ? Math.round((p.respondidas / p.totalQuestoes) * 100) : 0
+  return (
+    <div className="border-t border-slate-100 py-3 first:border-t-0 first:pt-0">
+      <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
+        <span className="truncate font-medium text-slate-700">{p.materiaNome}</span>
+        <span className="shrink-0 text-xs text-slate-400">
+          {p.respondidas}/{p.totalQuestoes} vistas ({coberto}%)
+        </span>
+      </div>
+      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+        <div className="h-full rounded-full bg-brand-blue" style={{ width: `${coberto}%` }} />
+      </div>
+      <p className="mt-1.5 text-xs text-slate-500">
+        {p.restantes === 0 ? (
+          <>Você já passou por todas as questões desta matéria.</>
+        ) : p.diasParaCobrir !== null ? (
+          <>
+            Faltam <strong className="text-navy">{p.restantes}</strong>. No ritmo dos últimos {JANELA_DIAS} dias, isso dá
+            cerca de <strong className="text-navy">{p.diasParaCobrir} dias</strong>.
+          </>
+        ) : (
+          <>
+            Faltam <strong className="text-navy">{p.restantes}</strong>. Ainda não dá para projetar um prazo — o ritmo
+            das últimas {JANELA_DIAS} dias foi baixo demais para arriscar uma data.
+          </>
+        )}
+      </p>
+    </div>
+  )
+}
+
 export default function Desempenho() {
   const { user } = useAuth()
+  // Sem os blocos das aulas: esta tela conta acertos, nunca mostra o texto do
+  // conteúdo — e os blocos são a parte pesada do tráfego.
+  const { aulas, materias, questaoPorId, aulaPorId, materiaNomePorId, loading } = useTodasQuestoes()
   const [respostas, setRespostas] = useState<Resposta[] | null>(null)
-  const [aulas, setAulas] = useState<Aula[]>([])
-  const [materias, setMaterias] = useState<MateriaComContagem[]>([])
 
   useEffect(() => {
     if (!user) return
-    Promise.all([repo.listRespostas(user.id), repo.listTodasAulas(user.id, true), repo.listMaterias(user.id)]).then(
-      ([r, a, m]) => {
-        setRespostas(r)
-        setAulas(a)
-        setMaterias(m)
-      },
-    )
+    repo.listRespostas(user.id).then(setRespostas)
   }, [user])
 
-  const aulaPorId = useMemo(() => new Map(aulas.map((a) => [a.id, a])), [aulas])
-  const materiaPorId = useMemo(() => new Map(materias.map((m) => [m.id, m.nome])), [materias])
-  const questaoPorId = useMemo(() => new Map(aulas.flatMap((a) => a.questoes).map((q) => [q.id, q])), [aulas])
-
   const porMateria = useMemo(
-    () => (respostas ? agrupar(respostas, (r) => r.materiaId, (id) => materiaPorId.get(id) ?? 'Matéria removida') : []),
-    [respostas, materiaPorId],
+    () =>
+      respostas
+        ? agrupar(respostas, (r) => r.materiaId, (id) => materiaNomePorId.get(id) ?? 'Matéria removida')
+        : [],
+    [respostas, materiaNomePorId],
   )
   const porAula = useMemo(
     () => (respostas ? agrupar(respostas, (r) => r.aulaId, (id) => aulaPorId.get(id)?.titulo ?? 'Aula removida') : []),
@@ -75,16 +128,35 @@ export default function Desempenho() {
   )
   const porAssunto = useMemo(
     () =>
-      respostas
-        ? agrupar(respostas, (r) => questaoPorId.get(r.questaoId)?.tema || '(sem assunto)', (t) => t)
-        : [],
+      respostas ? agrupar(respostas, (r) => questaoPorId.get(r.questaoId)?.tema || '(sem assunto)', (t) => t) : [],
     [respostas, questaoPorId],
   )
 
-  if (respostas === null) return <p className="text-sm text-slate-400">Carregando…</p>
+  const extrato = useMemo(
+    () => (respostas ? extratoDeAcompanhamento({ respostas, questaoPorId, materiaNomePorId }) : []),
+    [respostas, questaoPorId, materiaNomePorId],
+  )
+
+  const projecao = useMemo(() => {
+    if (!respostas) return []
+    const totalPorMateria = new Map<string, number>()
+    for (const m of materias) totalPorMateria.set(m.id, 0)
+    for (const a of aulas) totalPorMateria.set(a.materiaId, (totalPorMateria.get(a.materiaId) ?? 0) + a.questoes.length)
+    // Matéria sem questão nenhuma não tem o que projetar.
+    for (const [id, n] of totalPorMateria) if (n === 0) totalPorMateria.delete(id)
+    return projecaoPorMateria({ respostas, totalPorMateria, materiaNomePorId })
+  }, [respostas, aulas, materias, materiaNomePorId])
+
+  if (loading || respostas === null) return <p className="text-sm text-slate-400">Carregando…</p>
 
   if (respostas.length === 0) {
-    return <EmptyState icon={BarChart3} title="Você ainda não respondeu nenhuma questão" description="Suas estatísticas de acerto e erro aparecem aqui." />
+    return (
+      <EmptyState
+        icon={BarChart3}
+        title="Você ainda não respondeu nenhuma questão"
+        description="Suas estatísticas de acerto e erro aparecem aqui, junto com um extrato do que mudou de uma semana para a outra."
+      />
+    )
   }
 
   const totalAcertos = respostas.filter((r) => r.correta).length
@@ -98,6 +170,37 @@ export default function Desempenho() {
           de aproveitamento geral · {totalAcertos}/{respostas.length} questões
         </p>
       </Card>
+
+      {/* O extrato só aparece quando tem o que dizer. Uma caixa vazia com o
+          título "o que mudou" seria pior que nenhuma caixa. */}
+      {extrato.length > 0 && (
+        <section>
+          <h2 className="mb-2 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-400">
+            <CalendarRange className="h-4 w-4 text-brand-blue" strokeWidth={1.75} />
+            Extrato de acompanhamento
+          </h2>
+          <Card>
+            {extrato.map((e) => (
+              <LinhaExtrato key={e.id} evento={e} />
+            ))}
+            <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-400">
+              Comparação entre os últimos {JANELA_DIAS} dias e os {JANELA_DIAS} anteriores. Matérias com poucas
+              respostas ficam de fora até haver dado suficiente.
+            </p>
+          </Card>
+        </section>
+      )}
+
+      {projecao.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">Projeção por disciplina</h2>
+          <Card>
+            {projecao.map((p) => (
+              <LinhaProjecao key={p.materiaId} p={p} />
+            ))}
+          </Card>
+        </section>
+      )}
 
       <section>
         <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">Por matéria</h2>
