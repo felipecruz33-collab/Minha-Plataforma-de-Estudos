@@ -3,8 +3,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
+import { SeloOrigem } from '../components/ui/SeloOrigem'
 import { gerarSemanasAutomatico, gerarSemanasManual } from '../lib/cronogramaGerador'
 import { diasDaSemana, remanejarPendentes, tamanhoDaSemana } from '../lib/cronogramaSemana'
+import { agruparPorOrigem, GRUPO_BIBLIOTECA, GRUPO_MINHAS, nomesDuplicados, rotuloDaMateria } from '../lib/materiasPorOrigem'
 import { useAuth } from '../lib/auth/AuthContext'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo, type MateriaComContagem } from '../lib/repo'
@@ -227,6 +229,10 @@ export default function CronogramaPage() {
     setMostrarForm(true)
   }
 
+  /** Nomes que existem nas suas matérias E na biblioteca — os que precisam de carimbo. */
+  const nomesAmbiguos = nomesDuplicados(materiasDisponiveis)
+  const { minhas: minhasMaterias, biblioteca: materiasDaBiblioteca } = agruparPorOrigem(materiasDisponiveis)
+
   const rangeInvalido = dataFim <= dataInicio
   const semMateriaAuto = modo === 'automatico' && materiasSelecionadas.size === 0
 
@@ -312,8 +318,22 @@ export default function CronogramaPage() {
               {materiasDisponiveis.length === 0 ? (
                 <p className="text-xs text-slate-400">Você ainda não tem matérias — crie uma em "Adicionar conteúdo" primeiro.</p>
               ) : (
-                <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
-                  {materiasDisponiveis.map((m) => {
+                <div className="space-y-3">
+                  {/* Suas matérias e as da biblioteca em blocos separados: é
+                      comum as duas terem o mesmo nome, e numa lista só a pessoa
+                      marca no escuro qual está incluindo no plano. */}
+                  {[
+                    { titulo: GRUPO_MINHAS, itens: minhasMaterias },
+                    { titulo: GRUPO_BIBLIOTECA, itens: materiasDaBiblioteca },
+                  ]
+                    .filter((sec) => sec.itens.length > 0)
+                    .map((sec, _i, secoes) => (
+                      <div key={sec.titulo}>
+                        {secoes.length > 1 && (
+                          <p className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-400">{sec.titulo}</p>
+                        )}
+                        <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                  {sec.itens.map((m) => {
                     const aulasCount = aulasPorMateria[m.id]?.length ?? 0
                     return (
                       <label key={m.id} className="flex cursor-pointer items-center gap-2.5 px-3 py-2.5">
@@ -324,7 +344,10 @@ export default function CronogramaPage() {
                           className="h-4 w-4 rounded border-slate-300 text-brand-blue"
                         />
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-slate-700">{m.nome}</p>
+                          <p className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                            <span className="truncate">{m.nome}</span>
+                            {nomesAmbiguos.has(m.nome) && <SeloOrigem isBiblioteca={m.isBiblioteca} />}
+                          </p>
                           <p className="text-xs text-slate-400">
                             {aulasCount} aula{aulasCount !== 1 ? 's' : ''}
                           </p>
@@ -332,6 +355,9 @@ export default function CronogramaPage() {
                       </label>
                     )
                   })}
+                        </div>
+                      </div>
+                    ))}
                 </div>
               )}
             </div>
@@ -524,8 +550,16 @@ export default function CronogramaPage() {
                             </button>
                             <div className="min-w-0 flex-1">
                               <p className={`text-sm ${item.concluido ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{item.descricao}</p>
-                              <span className="flex flex-wrap items-center gap-x-2 text-xs text-slate-400">
+                              <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-400">
                                 {item.materiaNome && <span>{item.materiaNome}</span>}
+                                {/* Duas matérias com o mesmo nome deixariam a
+                                    tarefa ambígua depois de criada — o carimbo
+                                    sai do `materiaId`, que é o dado confiável. */}
+                                {item.materiaNome && nomesAmbiguos.has(item.materiaNome) && (
+                                  <SeloOrigem
+                                    isBiblioteca={!!materiasDisponiveis.find((m) => m.id === item.materiaId)?.isBiblioteca}
+                                  />
+                                )}
                                 {item.veioDaSemana !== undefined && (
                                   <span className="flex items-center gap-1 font-medium text-amber-600">
                                     <ArrowRightLeft className="h-3 w-3" strokeWidth={2} />
@@ -633,11 +667,27 @@ export default function CronogramaPage() {
                           className="shrink-0 rounded-lg border border-slate-300 px-1.5 py-1.5 text-xs outline-none focus:border-brand-blue"
                         >
                           <option value="">Geral</option>
-                          {materiasDisponiveis.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.nome}
-                            </option>
-                          ))}
+                          {/* `optgroup` é a forma nativa de separar num select
+                              — e continua funcionando no seletor do celular,
+                              que é onde isso mais confunde. */}
+                          {minhasMaterias.length > 0 && (
+                            <optgroup label={GRUPO_MINHAS}>
+                              {minhasMaterias.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {rotuloDaMateria(m, nomesAmbiguos)}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {materiasDaBiblioteca.length > 0 && (
+                            <optgroup label={GRUPO_BIBLIOTECA}>
+                              {materiasDaBiblioteca.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {rotuloDaMateria(m, nomesAmbiguos)}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
                         </select>
                         <button
                           type="button"

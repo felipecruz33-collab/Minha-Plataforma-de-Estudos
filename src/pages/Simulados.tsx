@@ -5,9 +5,11 @@ import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { EmptyState } from '../components/ui/EmptyState'
+import { SeloOrigem } from '../components/ui/SeloOrigem'
 import { useAuth } from '../lib/auth/AuthContext'
 import { contemTodasAsPalavras } from '../lib/buscarTexto'
 import { montarCadernoMensal, ROTULO_NIVEL, type CadernoMensal } from '../lib/cadernoMensal'
+import { agruparPorOrigem, GRUPO_BIBLIOTECA, GRUPO_MINHAS, nomesDuplicados } from '../lib/materiasPorOrigem'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo, type AulaComQuestoes, type MateriaComContagem } from '../lib/repo'
 import type { Questao, Resposta, Simulado, SimuladoMateria } from '../lib/types'
@@ -455,15 +457,39 @@ export default function Simulados() {
                 Nada encontrado para "{busca.trim()}".
               </p>
             ) : (
-              <div className="space-y-2">
-                {gruposVisiveis.map((g) => {
+              <div className="space-y-4">
+                {(() => {
+                  // As suas matérias e as da biblioteca em seções separadas. É
+                  // comum ter as duas com o mesmo nome — numa lista só, viram a
+                  // mesma linha e a escolha é no escuro.
+                  const { minhas, biblioteca } = agruparPorOrigem(gruposVisiveis.map((g) => ({ ...g, isBiblioteca: g.materia.isBiblioteca })))
+                  const duplicados = nomesDuplicados(gruposVisiveis.map((g) => g.materia))
+                  const secoes = [
+                    { titulo: GRUPO_MINHAS, itens: minhas },
+                    { titulo: GRUPO_BIBLIOTECA, itens: biblioteca },
+                  ].filter((sec) => sec.itens.length > 0)
+                  return secoes.map((sec) => (
+                    <div key={sec.titulo}>
+                      {/* O título da seção só aparece quando existem os dois
+                          lados; com um só, ele não separa nada. */}
+                      {secoes.length > 1 && (
+                        <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">{sec.titulo}</p>
+                      )}
+                      <div className="space-y-2">
+                        {sec.itens.map((g) => {
                   const escolhidasAqui = selecionadoNaMateria(g)
                   const disponivelNaMateria = g.aulas.reduce((n, a) => n + a.questoes.length, 0)
                   return (
                     <div key={g.materia.id} className="overflow-hidden rounded-lg border border-slate-200">
                       <div className="flex items-center justify-between gap-3 bg-slate-50 px-3 py-2">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-navy">{g.materia.nome}</p>
+                          <p className="flex items-center gap-2 text-sm font-semibold text-navy">
+                            <span className="truncate">{g.materia.nome}</span>
+                            {/* Mesmo dentro da seção, o carimbo fica quando o
+                                nome existe dos dois lados: numa tela rolada, o
+                                título da seção pode não estar à vista. */}
+                            {duplicados.has(g.materia.nome) && <SeloOrigem isBiblioteca={g.materia.isBiblioteca} />}
+                          </p>
                           <p className="text-xs text-slate-400">
                             {escolhidasAqui} de {disponivelNaMateria} selecionadas
                           </p>
@@ -506,7 +532,11 @@ export default function Simulados() {
                       </div>
                     </div>
                   )
-                })}
+                        })}
+                      </div>
+                    </div>
+                  ))
+                })()}
               </div>
             )}
 
