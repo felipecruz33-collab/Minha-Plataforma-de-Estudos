@@ -109,6 +109,22 @@ export interface ItemCronograma {
   aulaId: string | null
   descricao: string
   concluido: boolean
+  /**
+   * Dia dentro da semana: 0 = primeiro dia, 6 = último.
+   *
+   * Opcional porque cronogramas criados antes da divisão por dia não têm o
+   * campo — e continuam válidos: essas tarefas aparecem no grupo "sem dia
+   * marcado" em vez de sumirem. Como `semanas` é uma coluna `jsonb`, o campo
+   * novo não precisou de migração.
+   */
+  dia?: number | null
+  /**
+   * De qual semana a tarefa veio, quando foi remanejada por não ter sido feita.
+   *
+   * Guarda a origem PRIMEIRA, não a última: uma tarefa arrastada por três
+   * semanas continua mostrando o tamanho real do atraso.
+   */
+  veioDaSemana?: number
 }
 
 export interface SemanaCronograma {

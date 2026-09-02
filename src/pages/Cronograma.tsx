@@ -1,9 +1,10 @@
-import { CalendarDays, Check, CheckCircle2, ChevronDown, ChevronUp, Circle, PencilLine, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowRightLeft, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronUp, Circle, PencilLine, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { gerarSemanasAutomatico, gerarSemanasManual } from '../lib/cronogramaGerador'
+import { diasDaSemana, remanejarPendentes, tamanhoDaSemana } from '../lib/cronogramaSemana'
 import { useAuth } from '../lib/auth/AuthContext'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo, type MateriaComContagem } from '../lib/repo'
@@ -50,7 +51,9 @@ export default function CronogramaPage() {
   const [nomeEdicao, setNomeEdicao] = useState('')
   const [confirmarExcluir, setConfirmarExcluir] = useState(false)
   const [semanaAberta, setSemanaAberta] = useState<number | null>(null)
-  const [novoItem, setNovoItem] = useState<Record<number, { descricao: string; materiaId: string }>>({})
+  const [novoItem, setNovoItem] = useState<Record<number, { descricao: string; materiaId: string; dia: string }>>({})
+  /** O que foi remanejado nesta visita — some quando a pessoa fecha. */
+  const [avisoRemanejo, setAvisoRemanejo] = useState<{ movidas: number; origens: number[]; paraSemana: number } | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -65,6 +68,28 @@ export default function CronogramaPage() {
       const mapa: Record<string, Aula[]> = {}
       for (const m of todas) mapa[m.id] = await repo.listAulas(m.id)
       setAulasPorMateria(mapa)
+      // Tarefa não feita em semana que já acabou vem para a semana corrente.
+      // Sem isto, o atraso ficava enterrado numa semana que ninguém reabre — e
+      // o cronograma seguia mostrando "tudo certo" na semana de hoje.
+      //
+      // `remanejarPendentes` devolve `null` quando não há o que mover, e é por
+      // isso que abrir o cronograma não vira uma escrita no banco a cada visita.
+      const remanejo = cron ? remanejarPendentes(cron.semanas, hojeISO()) : null
+      if (cron && remanejo) {
+        const atualizado = { ...cron, semanas: remanejo.semanas }
+        setCronograma(atualizado)
+        setAvisoRemanejo({ movidas: remanejo.movidas, origens: remanejo.semanasDeOrigem, paraSemana: remanejo.paraSemana })
+        setSemanaAberta(remanejo.paraSemana)
+        await repo.upsertCronograma(user.id, {
+          nome: cron.nome,
+          modo: cron.modo,
+          dataInicio: cron.dataInicio,
+          dataFim: cron.dataFim,
+          materias: cron.materias,
+          semanas: remanejo.semanas,
+        })
+        return
+      }
       setCronograma(cron)
       if (cron) setSemanaAberta(semanaAtualDe(cron.semanas))
     })
@@ -152,9 +177,20 @@ export default function CronogramaPage() {
     if (!descricao) return
     const materiaId = rascunho.materiaId || null
     const materiaNome = materiaId ? (materiasDisponiveis.find((m) => m.id === materiaId)?.nome ?? '') : ''
-    const novo: ItemCronograma = { id: crypto.randomUUID(), materiaId, materiaNome, aulaId: null, descricao, concluido: false }
+    const dia = rascunho.dia === '' ? null : Number(rascunho.dia)
+    const novo: ItemCronograma = { id: crypto.randomUUID(), materiaId, materiaNome, aulaId: null, descricao, concluido: false, dia }
     salvarSemanas(cronograma.semanas.map((s) => (s.numero !== semanaNumero ? s : { ...s, itens: [...s.itens, novo] })))
-    setNovoItem((n) => ({ ...n, [semanaNumero]: { descricao: '', materiaId: '' } }))
+    setNovoItem((n) => ({ ...n, [semanaNumero]: { descricao: '', materiaId: '', dia: n[semanaNumero]?.dia ?? '' } }))
+  }
+
+  /** Troca a tarefa de dia dentro da mesma semana. */
+  function moverParaDia(semanaNumero: number, itemId: string, dia: number | null) {
+    if (!cronograma) return
+    salvarSemanas(
+      cronograma.semanas.map((s) =>
+        s.numero !== semanaNumero ? s : { ...s, itens: s.itens.map((it) => (it.id === itemId ? { ...it, dia } : it)) },
+      ),
+    )
   }
 
   async function renomear() {
@@ -401,6 +437,38 @@ export default function CronogramaPage() {
             </div>
           </Card>
 
+          {/* O remanejamento precisa ser VISÍVEL. Um app que reorganiza a
+              semana da pessoa em silêncio é um app em que ela para de confiar
+              — ela lembra de ter deixado a tarefa na semana 2. */}
+          {avisoRemanejo && (
+            <Card className="border-amber-200 bg-amber-50">
+              <div className="flex items-start gap-2.5">
+                <ArrowRightLeft className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" strokeWidth={2} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-amber-900">
+                    {avisoRemanejo.movidas === 1
+                      ? '1 tarefa que ficou para trás veio para esta semana.'
+                      : `${avisoRemanejo.movidas} tarefas que ficaram para trás vieram para esta semana.`}
+                  </p>
+                  <p className="mt-0.5 text-xs text-amber-800">
+                    {avisoRemanejo.origens.length === 1
+                      ? `Estava em aberto na semana ${avisoRemanejo.origens[0]}.`
+                      : `Estavam em aberto nas semanas ${avisoRemanejo.origens.join(', ')}.`}{' '}
+                    Chegaram sem dia marcado — escolha quando encaixar cada uma.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAvisoRemanejo(null)}
+                  className="shrink-0 rounded p-1 text-amber-500 hover:bg-amber-100"
+                  aria-label="Fechar aviso"
+                >
+                  <X className="h-4 w-4" strokeWidth={2} />
+                </button>
+              </div>
+            </Card>
+          )}
+
           <div className="space-y-2">
             {cronograma.semanas.map((semana) => {
               const total = semana.itens.length
@@ -433,36 +501,92 @@ export default function CronogramaPage() {
                   </button>
 
                   {aberta && (
-                    <div className="mt-3 space-y-1 border-t border-slate-100 pt-3">
+                    <div className="mt-3 border-t border-slate-100 pt-3">
                       {semana.itens.length === 0 && <p className="mb-2 text-xs text-slate-400">Nenhuma tarefa nessa semana ainda — adicione abaixo.</p>}
-                      {semana.itens.map((item) => (
-                        <div key={item.id} className="flex items-start gap-2 rounded-lg px-1.5 py-1.5 hover:bg-slate-50">
-                          <button
-                            type="button"
-                            onClick={() => toggleItem(semana.numero, item.id)}
-                            className="mt-0.5 shrink-0"
-                            aria-label={item.concluido ? 'Marcar como não feito' : 'Marcar como feito'}
-                          >
-                            {item.concluido ? (
-                              <CheckCircle2 className="h-[18px] w-[18px] text-emerald-500" strokeWidth={1.75} />
-                            ) : (
-                              <Circle className="h-[18px] w-[18px] text-slate-300" strokeWidth={1.75} />
-                            )}
-                          </button>
-                          <div className="min-w-0 flex-1">
-                            <p className={`text-sm ${item.concluido ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{item.descricao}</p>
-                            {item.materiaNome && <span className="text-xs text-slate-400">{item.materiaNome}</span>}
+
+                      {/* A semana projetada dia a dia. Dia vazio continua
+                          aparecendo: é ele que mostra onde ainda cabe coisa. */}
+                      {(() => {
+                        const { dias, semDia } = diasDaSemana(semana, hoje)
+                        const linha = (item: ItemCronograma) => (
+                          <div key={item.id} className="flex items-start gap-2 rounded-lg px-1.5 py-1.5 hover:bg-slate-50">
+                            <button
+                              type="button"
+                              onClick={() => toggleItem(semana.numero, item.id)}
+                              className="mt-0.5 shrink-0"
+                              aria-label={item.concluido ? 'Marcar como não feito' : 'Marcar como feito'}
+                            >
+                              {item.concluido ? (
+                                <CheckCircle2 className="h-[18px] w-[18px] text-emerald-500" strokeWidth={1.75} />
+                              ) : (
+                                <Circle className="h-[18px] w-[18px] text-slate-300" strokeWidth={1.75} />
+                              )}
+                            </button>
+                            <div className="min-w-0 flex-1">
+                              <p className={`text-sm ${item.concluido ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{item.descricao}</p>
+                              <span className="flex flex-wrap items-center gap-x-2 text-xs text-slate-400">
+                                {item.materiaNome && <span>{item.materiaNome}</span>}
+                                {item.veioDaSemana !== undefined && (
+                                  <span className="flex items-center gap-1 font-medium text-amber-600">
+                                    <ArrowRightLeft className="h-3 w-3" strokeWidth={2} />
+                                    veio da semana {item.veioDaSemana}
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                            <select
+                              value={typeof item.dia === 'number' ? String(item.dia) : ''}
+                              onChange={(e) => moverParaDia(semana.numero, item.id, e.target.value === '' ? null : Number(e.target.value))}
+                              className="shrink-0 rounded border border-slate-200 bg-white px-1 py-0.5 text-[11px] text-slate-500 outline-none focus:border-brand-blue"
+                              aria-label="Mudar o dia da tarefa"
+                            >
+                              <option value="">Sem dia</option>
+                              {dias.map((d) => (
+                                <option key={d.indice} value={d.indice}>
+                                  {d.rotulo}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => removerItem(semana.numero, item.id)}
+                              className="shrink-0 rounded p-1 text-slate-300 hover:bg-rose-50 hover:text-rose-500"
+                              aria-label="Remover tarefa"
+                            >
+                              <X className="h-3.5 w-3.5" strokeWidth={1.75} />
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => removerItem(semana.numero, item.id)}
-                            className="shrink-0 rounded p-1 text-slate-300 hover:bg-rose-50 hover:text-rose-500"
-                            aria-label="Remover tarefa"
-                          >
-                            <X className="h-3.5 w-3.5" strokeWidth={1.75} />
-                          </button>
-                        </div>
-                      ))}
+                        )
+                        return (
+                          <>
+                            {semDia.length > 0 && (
+                              <div className="mb-3 rounded-lg bg-amber-50/60 p-2">
+                                <p className="mb-1 px-1.5 text-xs font-bold text-amber-700">
+                                  Sem dia marcado ({semDia.length}) — escolha quando encaixar
+                                </p>
+                                {semDia.map(linha)}
+                              </div>
+                            )}
+                            {dias.map((d) => (
+                              <div key={d.indice} className="mb-1.5">
+                                <p
+                                  className={`px-1.5 text-xs font-bold ${
+                                    d.ehHoje ? 'text-brand-blue' : d.ehPassado ? 'text-slate-300' : 'text-slate-400'
+                                  }`}
+                                >
+                                  {d.rotulo}
+                                  {d.ehHoje && <span className="ml-1.5 font-semibold">· hoje</span>}
+                                </p>
+                                {d.itens.length === 0 ? (
+                                  <p className="px-1.5 py-1 text-xs text-slate-300">livre</p>
+                                ) : (
+                                  d.itens.map(linha)
+                                )}
+                              </div>
+                            ))}
+                          </>
+                        )
+                      })()}
 
                       <div className="flex items-center gap-1.5 pt-1.5">
                         <input
@@ -470,7 +594,10 @@ export default function CronogramaPage() {
                           placeholder="Adicionar tarefa…"
                           value={novoItem[semana.numero]?.descricao ?? ''}
                           onChange={(e) =>
-                            setNovoItem((n) => ({ ...n, [semana.numero]: { descricao: e.target.value, materiaId: n[semana.numero]?.materiaId ?? '' } }))
+                            setNovoItem((n) => ({
+                              ...n,
+                              [semana.numero]: { ...(n[semana.numero] ?? { materiaId: '', dia: '' }), descricao: e.target.value },
+                            }))
                           }
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') adicionarItem(semana.numero)
@@ -478,9 +605,30 @@ export default function CronogramaPage() {
                           className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-brand-blue"
                         />
                         <select
+                          value={novoItem[semana.numero]?.dia ?? ''}
+                          onChange={(e) =>
+                            setNovoItem((n) => ({
+                              ...n,
+                              [semana.numero]: { ...(n[semana.numero] ?? { descricao: '', materiaId: '' }), dia: e.target.value },
+                            }))
+                          }
+                          className="shrink-0 rounded-lg border border-slate-300 px-1.5 py-1.5 text-xs outline-none focus:border-brand-blue"
+                          aria-label="Dia da tarefa"
+                        >
+                          <option value="">Sem dia</option>
+                          {Array.from({ length: tamanhoDaSemana(semana) }, (_, i) => (
+                            <option key={i} value={i}>
+                              {diasDaSemana(semana, hoje).dias[i].rotulo}
+                            </option>
+                          ))}
+                        </select>
+                        <select
                           value={novoItem[semana.numero]?.materiaId ?? ''}
                           onChange={(e) =>
-                            setNovoItem((n) => ({ ...n, [semana.numero]: { descricao: n[semana.numero]?.descricao ?? '', materiaId: e.target.value } }))
+                            setNovoItem((n) => ({
+                              ...n,
+                              [semana.numero]: { ...(n[semana.numero] ?? { descricao: '', dia: '' }), materiaId: e.target.value },
+                            }))
                           }
                           className="shrink-0 rounded-lg border border-slate-300 px-1.5 py-1.5 text-xs outline-none focus:border-brand-blue"
                         >

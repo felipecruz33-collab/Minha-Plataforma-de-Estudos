@@ -1,3 +1,4 @@
+import { distribuirPorDia } from './cronogramaSemana'
 import type { SemanaCronograma } from './types'
 
 export interface MateriaParaCronograma {
@@ -69,14 +70,20 @@ export function gerarSemanasAutomatico(dataInicio: string, dataFim: string, mate
       numero: n,
       inicioEm: paraISODate(cursor),
       fimEm: paraISODate(fimSemana),
-      itens: itensSemana.map((u) => ({
-        id: crypto.randomUUID(),
-        materiaId: u.materiaId,
-        materiaNome: u.materiaNome,
-        aulaId: u.aulaId,
-        descricao: u.descricao,
-        concluido: false,
-      })),
+      // Espalhadas pelos 7 dias em vez de empilhadas na semana: a semana
+      // projetada dia a dia é o que transforma "estude isto nos próximos 7
+      // dias" em algo que dá pra abrir de manhã e saber o que fazer hoje.
+      itens: distribuirPorDia(
+        itensSemana.map((u) => ({
+          id: crypto.randomUUID(),
+          materiaId: u.materiaId,
+          materiaNome: u.materiaNome,
+          aulaId: u.aulaId,
+          descricao: u.descricao,
+          concluido: false,
+        })),
+        7,
+      ),
     })
     cursor = addDias(cursor, 7)
   }
@@ -86,14 +93,19 @@ export function gerarSemanasAutomatico(dataInicio: string, dataFim: string, mate
       numero: semanasEstudo + 1,
       inicioEm: paraISODate(cursor),
       fimEm: dataFim,
-      itens: materias.map((m) => ({
-        id: crypto.randomUUID(),
-        materiaId: m.materiaId,
-        materiaNome: m.materiaNome,
-        aulaId: null,
-        descricao: `Revisão geral — ${m.materiaNome}`,
-        concluido: false,
-      })),
+      // A semana de revisão também é dividida por dia — ela nascia sem dia
+      // nenhum e caía inteira no grupo "sem dia marcado".
+      itens: distribuirPorDia(
+        materias.map((m) => ({
+          id: crypto.randomUUID(),
+          materiaId: m.materiaId,
+          materiaNome: m.materiaNome,
+          aulaId: null,
+          descricao: `Revisão geral — ${m.materiaNome}`,
+          concluido: false,
+        })),
+        7,
+      ),
     })
   }
 
