@@ -9,7 +9,7 @@ import { diasDaSemana, remanejarPendentes, tamanhoDaSemana } from '../lib/cronog
 import { agruparPorOrigem, GRUPO_BIBLIOTECA, GRUPO_MINHAS, nomesDuplicados, rotuloDaMateria } from '../lib/materiasPorOrigem'
 import { useAuth } from '../lib/auth/AuthContext'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
-import { repo, type MateriaComContagem } from '../lib/repo'
+import { repo, type AulaBasica, type MateriaComContagem } from '../lib/repo'
 import type { Aula, Cronograma, ItemCronograma, SemanaCronograma } from '../lib/types'
 
 function hojeISO(): string {
@@ -38,7 +38,7 @@ function semanaAtualDe(semanas: SemanaCronograma[]): number | null {
 export default function CronogramaPage() {
   const { user, perfil } = useAuth()
   const [materiasDisponiveis, setMateriasDisponiveis] = useState<MateriaComContagem[]>([])
-  const [aulasPorMateria, setAulasPorMateria] = useState<Record<string, Aula[]>>({})
+  const [aulasPorMateria, setAulasPorMateria] = useState<Record<string, AulaBasica[]>>({})
   const [cronograma, setCronograma] = useState<Cronograma | null | undefined>(undefined)
   const [mostrarForm, setMostrarForm] = useState(false)
 
@@ -67,8 +67,14 @@ export default function CronogramaPage() {
     ]).then(async ([minhas, biblio, cron]) => {
       const todas = [...minhas, ...biblio]
       setMateriasDisponiveis(todas)
-      const mapa: Record<string, Aula[]> = {}
-      for (const m of todas) mapa[m.id] = await repo.listAulas(m.id)
+      // UMA consulta pra todas as matérias. Antes era uma por matéria, em
+      // laço, cada uma esperando a anterior: no navegador isso vira uma viagem
+      // de rede por matéria, enfileiradas, e o tempo de abrir o cronograma
+      // crescia junto com o número de matérias da pessoa.
+      const mapa: Record<string, AulaBasica[]> = {}
+      for (const a of await repo.listAulasBasicas(todas.map((m) => m.id))) {
+        ;(mapa[a.materiaId] ??= []).push(a)
+      }
       setAulasPorMateria(mapa)
       // Tarefa não feita em semana que já acabou vem para a semana corrente.
       // Sem isto, o atraso ficava enterrado numa semana que ninguém reabre — e

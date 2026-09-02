@@ -3,8 +3,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { QuestionCard } from '../components/QuestionCard'
 import { Card } from '../components/ui/Card'
+import { CarregarMais } from '../components/ui/CarregarMais'
 import { ContentBlock } from '../components/ui/ContentBlock'
 import { useAuth } from '../lib/auth/AuthContext'
+import { useListaVisivel } from '../lib/hooks/useListaVisivel'
 import { useTodasQuestoes } from '../lib/hooks/useTodasQuestoes'
 import { repo } from '../lib/repo'
 import { estadosDeRevisao } from '../lib/revisaoEspacada'
@@ -124,6 +126,12 @@ export default function Revisao() {
       .sort((a, b) => b.vencidas - a.vencidas || a.pct - b.pct)
   }, [respostas, estados, questaoPorId, aulaPorId, materiaNomePorId])
 
+  // Um caderno por aula com erro: cresce com o acervo. Medido em celular, 288
+  // aulas levavam 1.186 ms contra 475 ms com 36. Os primeiros já são os mais
+  // urgentes — a ordenação garante isso —, então paginar não esconde nada que
+  // importe agora.
+  const visiveis = useListaVisivel(cadernos)
+
   if (loading || respostas === null) return <p className="text-sm text-slate-400">Carregando…</p>
 
   if (cadernos.length === 0) {
@@ -159,7 +167,7 @@ export default function Revisao() {
       </p>
 
       <div className="space-y-3">
-        {cadernos.map((c) => {
+        {visiveis.visiveis.map((c) => {
           const estaAberto = aberto === c.aulaId
           const cor = c.pct >= 70 ? 'bg-emerald-500' : c.pct >= 40 ? 'bg-amber-500' : 'bg-rose-500'
           return (
@@ -227,6 +235,12 @@ export default function Revisao() {
             </div>
           )
         })}
+        <CarregarMais
+          mostrando={visiveis.visiveis.length}
+          total={visiveis.total}
+          temMais={visiveis.temMais}
+          onVerMais={visiveis.verMais}
+        />
       </div>
     </div>
   )

@@ -101,6 +101,9 @@ export class CachedRepository implements DataRepository {
   listAulasComQuestoes(materiaIds: string[]) {
     return this.ler(`aulasComQuestoes:${materiaIds.join(',')}`, () => this.base.listAulasComQuestoes(materiaIds))
   }
+  listAulasBasicas(materiaIds: string[]) {
+    return this.ler(`aulasBasicas:${materiaIds.join(',')}`, () => this.base.listAulasBasicas(materiaIds))
+  }
   listRespostas(userId: string) {
     return this.ler(`respostas:${userId}`, () => this.base.listRespostas(userId))
   }

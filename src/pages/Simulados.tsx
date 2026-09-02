@@ -4,12 +4,14 @@ import { QuestionCard } from '../components/QuestionCard'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
+import { CarregarMais } from '../components/ui/CarregarMais'
 import { EmptyState } from '../components/ui/EmptyState'
 import { SeloOrigem } from '../components/ui/SeloOrigem'
 import { useAuth } from '../lib/auth/AuthContext'
 import { contemTodasAsPalavras } from '../lib/buscarTexto'
 import { montarCadernoMensal, ROTULO_NIVEL, type CadernoMensal } from '../lib/cadernoMensal'
 import { agruparPorOrigem, GRUPO_BIBLIOTECA, GRUPO_MINHAS, nomesDuplicados } from '../lib/materiasPorOrigem'
+import { useListaVisivel } from '../lib/hooks/useListaVisivel'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo, type AulaComQuestoes, type MateriaComContagem } from '../lib/repo'
 import type { Questao, Resposta, Simulado, SimuladoMateria } from '../lib/types'
@@ -45,6 +47,95 @@ interface ConfigAtiva {
   nome: string
   materias: { materiaId: string; materiaNome: string; quantidade: number }[]
   tempoLimiteSegundos: number | null
+}
+
+interface CartaoMateriaProps {
+  grupo: { materia: MateriaComContagem; aulas: AulaComQuestoes[] }
+  carimbo: boolean
+  quantidades: Record<string, number>
+  selecionadoNaMateria: (g: { aulas: AulaComQuestoes[] }) => number
+  definirQuantidade: (aulaId: string, disponivel: number, valor: number) => void
+  definirMateriaInteira: (g: { aulas: AulaComQuestoes[] }, tudo: boolean) => void
+}
+
+/**
+ * O cartão de uma matéria, com as aulas dela.
+ *
+ * É um componente, e não um trecho no meio do `map`, porque precisa do próprio
+ * `useListaVisivel`: uma matéria pode ter centenas de aulas, e paginar só a
+ * lista de MATÉRIAS deixava o cartão desenhando todas as aulas de cada uma.
+ * Hook não pode viver dentro de um laço, então o cartão virou componente.
+ */
+function CartaoMateria({
+  grupo: g,
+  carimbo,
+  quantidades,
+  selecionadoNaMateria,
+  definirQuantidade,
+  definirMateriaInteira,
+}: CartaoMateriaProps) {
+  const aulasVisiveis = useListaVisivel(g.aulas, 10)
+  const escolhidasAqui = selecionadoNaMateria(g)
+  const disponivelNaMateria = g.aulas.reduce((n, a) => n + a.questoes.length, 0)
+  return (
+    <div className="overflow-hidden rounded-lg border border-slate-200">
+      <div className="flex items-center justify-between gap-3 bg-slate-50 px-3 py-2">
+        <div className="min-w-0">
+          <p className="flex items-center gap-2 text-sm font-semibold text-navy">
+            <span className="truncate">{g.materia.nome}</span>
+            {/* Mesmo dentro da seção, o carimbo fica quando o nome existe dos
+                dois lados: numa tela rolada, o título da seção pode não estar
+                à vista. */}
+            {carimbo && <SeloOrigem isBiblioteca={g.materia.isBiblioteca} />}
+          </p>
+          <p className="text-xs text-slate-400">
+            {escolhidasAqui} de {disponivelNaMateria} selecionadas
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => definirMateriaInteira(g, escolhidasAqui !== disponivelNaMateria)}
+          className="shrink-0 text-xs font-medium text-brand-blue hover:underline"
+        >
+          {escolhidasAqui === disponivelNaMateria ? 'limpar' : 'usar todas'}
+        </button>
+      </div>
+
+      <div className="divide-y divide-slate-100">
+        {aulasVisiveis.visiveis.map((a) => {
+          const disponivel = a.questoes.length
+          return (
+            <div key={a.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+              <div className="min-w-0">
+                <p className="truncate text-sm text-slate-700">{a.titulo}</p>
+                <button
+                  type="button"
+                  onClick={() => definirQuantidade(a.id, disponivel, disponivel)}
+                  className="text-xs text-slate-400 hover:text-brand-blue hover:underline"
+                >
+                  {disponivel} disponíve{disponivel === 1 ? 'l' : 'is'}
+                </button>
+              </div>
+              <input
+                type="number"
+                min={0}
+                max={disponivel}
+                value={quantidades[a.id] ?? 0}
+                onChange={(e) => definirQuantidade(a.id, disponivel, Number(e.target.value))}
+                className="w-16 shrink-0 rounded-lg border border-slate-300 px-2 py-1.5 text-center text-sm outline-none focus:border-brand-blue"
+              />
+            </div>
+          )
+        })}
+      </div>
+      <CarregarMais
+        mostrando={aulasVisiveis.visiveis.length}
+        total={aulasVisiveis.total}
+        temMais={aulasVisiveis.temMais}
+        onVerMais={aulasVisiveis.verMais}
+      />
+    </div>
+  )
 }
 
 export default function Simulados() {
@@ -167,6 +258,15 @@ export default function Simulados() {
       })
       .filter((g) => g.aulas.length > 0)
   }, [grupos, busca])
+
+  // Cada matéria vira um cartão com uma linha por aula: a tela crescia com o
+  // acervo inteiro. Medido em celular, 288 aulas levavam 1.173 ms contra 514 ms
+  // com 36. A busca logo acima é o atalho pra quem quer uma matéria específica
+  // sem paginar até ela.
+  // 8, e não os 20 do padrão: cada matéria aqui não é uma linha, é um cartão
+  // com até 10 aulas dentro. Vinte cartões dariam duzentas linhas de uma vez —
+  // paginar a lista de fora sem olhar o que vem dentro não resolveria nada.
+  const pagina = useListaVisivel(gruposVisiveis, 8)
 
   const totalSelecionado = useMemo(() => Object.values(quantidades).reduce((a, b) => a + b, 0), [quantidades])
 
@@ -462,7 +562,10 @@ export default function Simulados() {
                   // As suas matérias e as da biblioteca em seções separadas. É
                   // comum ter as duas com o mesmo nome — numa lista só, viram a
                   // mesma linha e a escolha é no escuro.
-                  const { minhas, biblioteca } = agruparPorOrigem(gruposVisiveis.map((g) => ({ ...g, isBiblioteca: g.materia.isBiblioteca })))
+                  const { minhas, biblioteca } = agruparPorOrigem(pagina.visiveis.map((g) => ({ ...g, isBiblioteca: g.materia.isBiblioteca })))
+                  // O carimbo olha a lista INTEIRA, não só a página: um nome
+                  // repetido continua ambíguo mesmo que a outra matéria de
+                  // mesmo nome ainda não tenha sido carregada.
                   const duplicados = nomesDuplicados(gruposVisiveis.map((g) => g.materia))
                   const secoes = [
                     { titulo: GRUPO_MINHAS, itens: minhas },
@@ -476,67 +579,27 @@ export default function Simulados() {
                         <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">{sec.titulo}</p>
                       )}
                       <div className="space-y-2">
-                        {sec.itens.map((g) => {
-                  const escolhidasAqui = selecionadoNaMateria(g)
-                  const disponivelNaMateria = g.aulas.reduce((n, a) => n + a.questoes.length, 0)
-                  return (
-                    <div key={g.materia.id} className="overflow-hidden rounded-lg border border-slate-200">
-                      <div className="flex items-center justify-between gap-3 bg-slate-50 px-3 py-2">
-                        <div className="min-w-0">
-                          <p className="flex items-center gap-2 text-sm font-semibold text-navy">
-                            <span className="truncate">{g.materia.nome}</span>
-                            {/* Mesmo dentro da seção, o carimbo fica quando o
-                                nome existe dos dois lados: numa tela rolada, o
-                                título da seção pode não estar à vista. */}
-                            {duplicados.has(g.materia.nome) && <SeloOrigem isBiblioteca={g.materia.isBiblioteca} />}
-                          </p>
-                          <p className="text-xs text-slate-400">
-                            {escolhidasAqui} de {disponivelNaMateria} selecionadas
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => definirMateriaInteira(g, escolhidasAqui !== disponivelNaMateria)}
-                          className="shrink-0 text-xs font-medium text-brand-blue hover:underline"
-                        >
-                          {escolhidasAqui === disponivelNaMateria ? 'limpar' : 'usar todas'}
-                        </button>
-                      </div>
-
-                      <div className="divide-y divide-slate-100">
-                        {g.aulas.map((a) => {
-                          const disponivel = a.questoes.length
-                          return (
-                            <div key={a.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                              <div className="min-w-0">
-                                <p className="truncate text-sm text-slate-700">{a.titulo}</p>
-                                <button
-                                  type="button"
-                                  onClick={() => definirQuantidade(a.id, disponivel, disponivel)}
-                                  className="text-xs text-slate-400 hover:text-brand-blue hover:underline"
-                                >
-                                  {disponivel} disponíve{disponivel === 1 ? 'l' : 'is'}
-                                </button>
-                              </div>
-                              <input
-                                type="number"
-                                min={0}
-                                max={disponivel}
-                                value={quantidades[a.id] ?? 0}
-                                onChange={(e) => definirQuantidade(a.id, disponivel, Number(e.target.value))}
-                                className="w-16 shrink-0 rounded-lg border border-slate-300 px-2 py-1.5 text-center text-sm outline-none focus:border-brand-blue"
-                              />
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )
-                        })}
+                        {sec.itens.map((g) => (
+                          <CartaoMateria
+                            key={g.materia.id}
+                            grupo={g}
+                            carimbo={duplicados.has(g.materia.nome)}
+                            quantidades={quantidades}
+                            selecionadoNaMateria={selecionadoNaMateria}
+                            definirQuantidade={definirQuantidade}
+                            definirMateriaInteira={definirMateriaInteira}
+                          />
+                        ))}
                       </div>
                     </div>
                   ))
                 })()}
+                <CarregarMais
+                  mostrando={pagina.visiveis.length}
+                  total={pagina.total}
+                  temMais={pagina.temMais}
+                  onVerMais={pagina.verMais}
+                />
               </div>
             )}
 
