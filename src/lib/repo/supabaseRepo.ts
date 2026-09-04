@@ -1,7 +1,7 @@
 import { supabase } from '../supabaseClient'
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
-import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
+import type { Aula, AulaImportPayload, Bloco, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
 import type { AulaBasica, AulaComQuestoes, BackupData, DataRepository, MateriaComContagem } from './types'
 
 function questaoDaLinha(q: any): Questao {
@@ -196,6 +196,21 @@ export class SupabaseRepository implements DataRepository {
     // Cada matéria ordenada por conta própria, na ordem em que as matérias
     // foram pedidas — é assim que a tela espera montar o segundo select.
     return materiaIds.flatMap((id) => ordenarAulas(porMateria.get(id) ?? []))
+  }
+
+  async salvarCicloRevisao(userId: string, ciclo: EstadoDoCicloRevisao): Promise<Perfil> {
+    const { data, error } = await this.db()
+      .from('profiles')
+      .update({
+        revisao_pausada_em: ciclo.pausadaEm,
+        revisao_retomada_em: ciclo.retomadaEm,
+        revisao_reinicio: ciclo.reinicio,
+      })
+      .eq('id', userId)
+      .select()
+      .single()
+    if (error) throw error
+    return this.hydratePerfil(userId, data.email, data)
   }
 
   async listAulasBasicas(materiaIds: string[]): Promise<AulaBasica[]> {
@@ -401,7 +416,10 @@ export class SupabaseRepository implements DataRepository {
   private async hydratePerfil(userId: string, email: string, data: any | null): Promise<Perfil> {
     const isAdminViaRole = await this.checarPapelAdmin(userId)
     if (!data) {
-      return { userId, email, nome: '', isAdmin: isAdminViaRole, isPremium: false, favoritos: [], chaveGemini: null }
+      return {
+        userId, email, nome: '', isAdmin: isAdminViaRole, isPremium: false, favoritos: [], chaveGemini: null,
+        revisao: { pausadaEm: null, retomadaEm: null, reinicio: null },
+      }
     }
     return {
       userId: data.id,
@@ -411,6 +429,13 @@ export class SupabaseRepository implements DataRepository {
       isPremium: data.is_premium,
       favoritos: data.favoritos ?? [],
       chaveGemini: data.chave_gemini ?? null,
+      // `?? null` também cobre o caso de a migração 0017 ainda não ter sido
+      // aplicada: sem as colunas, o ciclo simplesmente roda como sempre rodou.
+      revisao: {
+        pausadaEm: data.revisao_pausada_em ?? null,
+        retomadaEm: data.revisao_retomada_em ?? null,
+        reinicio: data.revisao_reinicio ?? null,
+      },
     }
   }
 
@@ -439,6 +464,11 @@ export class SupabaseRepository implements DataRepository {
       isPremium: p.is_premium,
       favoritos: p.favoritos ?? [],
       chaveGemini: p.chave_gemini ?? null,
+      revisao: {
+        pausadaEm: p.revisao_pausada_em ?? null,
+        retomadaEm: p.revisao_retomada_em ?? null,
+        reinicio: p.revisao_reinicio ?? null,
+      },
     }))
   }
 
@@ -515,6 +545,11 @@ export class SupabaseRepository implements DataRepository {
       isPremium: data.is_premium,
       favoritos: data.favoritos ?? [],
       chaveGemini: data.chave_gemini ?? null,
+      revisao: {
+        pausadaEm: data.revisao_pausada_em ?? null,
+        retomadaEm: data.revisao_retomada_em ?? null,
+        reinicio: data.revisao_reinicio ?? null,
+      },
     }
   }
 

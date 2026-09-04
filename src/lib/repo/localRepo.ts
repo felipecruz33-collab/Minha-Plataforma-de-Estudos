@@ -1,6 +1,6 @@
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
-import type { Aula, AulaImportPayload, Bloco, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
+import type { Aula, AulaImportPayload, Bloco, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
 import type { AulaBasica, AulaComQuestoes, BackupData, DataRepository, MateriaComContagem } from './types'
 
 const STORAGE_KEY = 'mpe:v1'
@@ -273,20 +273,28 @@ export class LocalRepository implements DataRepository {
     save(s)
   }
 
+  /** Perfil gravado antes do ciclo de revisão existir não tem o campo — completa. */
+  private static comCiclo(p: Perfil): Perfil {
+    return p.revisao ? p : { ...p, revisao: { pausadaEm: null, retomadaEm: null, reinicio: null } }
+  }
+
   async getPerfil(userId: string, email: string): Promise<Perfil> {
     const s = load()
     const adminEmail = ((import.meta.env.VITE_ADMIN_EMAIL as string | undefined) ?? DEFAULT_ADMIN_EMAIL).toLowerCase()
     const deveSerAdmin = email.toLowerCase() === adminEmail
 
     if (!s.perfis[userId]) {
-      s.perfis[userId] = { userId, email, nome: '', isAdmin: deveSerAdmin, isPremium: false, favoritos: [], chaveGemini: null }
+      s.perfis[userId] = {
+        userId, email, nome: '', isAdmin: deveSerAdmin, isPremium: false, favoritos: [], chaveGemini: null,
+        revisao: { pausadaEm: null, retomadaEm: null, reinicio: null },
+      }
       save(s)
     } else if (deveSerAdmin && !s.perfis[userId].isAdmin) {
       // Corrige perfis criados antes de VITE_ADMIN_EMAIL estar configurada corretamente.
       s.perfis[userId].isAdmin = true
       save(s)
     }
-    return s.perfis[userId]
+    return LocalRepository.comCiclo(s.perfis[userId])
   }
 
   async atualizarNome(userId: string, nome: string): Promise<Perfil> {
@@ -352,6 +360,14 @@ export class LocalRepository implements DataRepository {
       else porMateria.set(a.materiaId, [basica])
     }
     return materiaIds.flatMap((id) => ordenarAulas(porMateria.get(id) ?? []))
+  }
+
+  async salvarCicloRevisao(userId: string, ciclo: EstadoDoCicloRevisao): Promise<Perfil> {
+    const s = load()
+    if (!s.perfis[userId]) throw new Error('Perfil não encontrado')
+    s.perfis[userId] = { ...LocalRepository.comCiclo(s.perfis[userId]), revisao: ciclo }
+    save(s)
+    return s.perfis[userId]
   }
 
   async usoNoPeriodo(userId: string, desdeISO: string): Promise<UsoIA[]> {

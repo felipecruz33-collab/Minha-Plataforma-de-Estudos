@@ -1,5 +1,6 @@
 import { CalendarClock, CheckCircle2, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { ControleDaRevisao } from '../components/ControleDaRevisao'
 import { QuestionCard } from '../components/QuestionCard'
 import { CarregarMais } from '../components/ui/CarregarMais'
 import { EmptyState } from '../components/ui/EmptyState'
@@ -16,8 +17,8 @@ const selectCls = 'rounded-lg border border-slate-300 px-2.5 py-2 text-sm outlin
 
 /** Etiqueta do prazo, acima do cartão — vermelha quando já passou da hora. */
 function Prazo({ estado }: { estado: EstadoRevisao }) {
-  const atrasada = estado.diasAteVoltar < 0
-  const hoje = estado.diasAteVoltar === 0
+  const atrasada = !estado.pausada && estado.diasAteVoltar < 0
+  const hoje = !estado.pausada && estado.diasAteVoltar === 0
   const cor = atrasada ? 'text-rose-600' : hoje ? 'text-amber-600' : 'text-slate-400'
   return (
     <p className={`mb-1 flex items-center gap-1.5 text-xs font-medium ${cor}`}>
@@ -34,7 +35,7 @@ function Prazo({ estado }: { estado: EstadoRevisao }) {
 }
 
 export default function Erradas() {
-  const { user } = useAuth()
+  const { user, perfil } = useAuth()
   const { questaoPorId, materias, aulas, loading } = useTodasQuestoes()
   const [respostas, setRespostas] = useState<Resposta[] | null>(null)
   // `null` = ninguém escolheu ainda, então a aba segue os dados. Abrir sempre
@@ -53,7 +54,7 @@ export default function Erradas() {
   // Calculado antes de qualquer saída antecipada: um hook não pode ficar
   // depois de um `return`, e o `useMemo` é o que dá à lista uma identidade
   // estável — sem ela o "carregar mais" nunca sairia da primeira página.
-  const estados = useMemo(() => estadosDeRevisao(respostas ?? []), [respostas])
+  const estados = useMemo(() => estadosDeRevisao(respostas ?? [], new Date(), perfil?.revisao), [respostas, perfil?.revisao])
 
   const todasErradas = useMemo(() => {
     if (!respostas) return []
@@ -96,16 +97,22 @@ export default function Erradas() {
 
   if (todasErradas.length === 0 && estados.size === 0) {
     return (
-      <EmptyState
-        icon={XCircle}
-        title="Nenhuma questão errada por aqui"
-        description="Continue assim! Quando você errar uma questão ela entra num ciclo de revisão: volta amanhã, depois em 3 dias, 7, 21 e 60 — cada vez que você acerta, ela demora mais para voltar."
-      />
+      <div>
+        {/* Idem: quem pausou ou recomeçou precisa poder voltar atrás daqui. */}
+        <ControleDaRevisao />
+        <EmptyState
+          icon={XCircle}
+          title="Nenhuma questão errada por aqui"
+          description="Continue assim! Quando você errar uma questão ela entra num ciclo de revisão: volta amanhã, depois em 3 dias, 7, 21 e 60 — cada vez que você acerta, ela demora mais para voltar."
+        />
+      </div>
     )
   }
 
   return (
     <div>
+      <ControleDaRevisao />
+
       <div className="mb-4">
         <Tabs
           tabs={[
