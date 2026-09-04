@@ -171,9 +171,17 @@ export function QuestionCard({
       </div>
 
       {emRascunho && rascunho && (
-        <p className="mt-3 flex items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-medium text-blue-800">
-          <EyeOff className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
-          Marcada a <strong>{rascunho}</strong> — pode trocar. A resposta só é registrada quando você mandar corrigir.
+        // Sem dizer QUAL alternativa foi marcada. A letra aqui era informação
+        // repetida — a alternativa já está destacada em azul logo acima — e,
+        // solta ao lado de um ícone de "escondido", passava a ler como se
+        // fosse o gabarito. Num modo que existe justamente para não entregar a
+        // resposta, uma letra ambígua já é entrega demais.
+        //
+        // O texto vai dentro de um <span> porque o <p> é flex: cada pedaço
+        // solto virava um item do flex, e a frase se quebrava em colunas.
+        <p className="mt-3 flex items-start gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-medium text-blue-800">
+          <EyeOff className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+          <span>Resposta marcada — dá pra trocar. Ela só é registrada quando você mandar corrigir.</span>
         </p>
       )}
 
