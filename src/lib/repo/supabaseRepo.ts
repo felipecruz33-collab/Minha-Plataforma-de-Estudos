@@ -386,13 +386,20 @@ export class SupabaseRepository implements DataRepository {
     }
   }
 
-  async esquecerRespostas(userId: string, escopo: { materiaId?: string; aulaId?: string }): Promise<void> {
+  async esquecerRespostas(
+    userId: string,
+    escopo: { materiaId?: string; aulaId?: string; questaoIds?: string[] },
+  ): Promise<void> {
+    // Lista vazia significa "nenhuma questão selecionada" — apagar tudo aqui
+    // seria o oposto do que a pessoa pediu.
+    if (escopo.questaoIds && escopo.questaoIds.length === 0) return
     // O `eq('user_id', ...)` é redundante com a RLS ("respostas: acesso
     // próprio", em 0002) — mas sem ele um erro de escopo aqui viraria um
     // DELETE sem filtro nenhum, e é melhor que a rede nunca chegue a carregar
     // essa requisição.
     let consulta = this.db().from('respostas').delete().eq('user_id', userId)
-    if (escopo.aulaId) consulta = consulta.eq('aula_id', escopo.aulaId)
+    if (escopo.questaoIds) consulta = consulta.in('questao_id', escopo.questaoIds)
+    else if (escopo.aulaId) consulta = consulta.eq('aula_id', escopo.aulaId)
     else if (escopo.materiaId) consulta = consulta.eq('materia_id', escopo.materiaId)
     const { error } = await consulta
     if (error) throw error

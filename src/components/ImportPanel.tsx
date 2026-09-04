@@ -415,15 +415,6 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                 "Gerações IA" após importar.
               </span>
             </p>
-            <p className="mb-2 flex items-start gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-              <FileJson className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              <span>
-                Quer material mais aprofundado — teoria expandida e comentário em <span className="font-semibold">cada</span>{' '}
-                alternativa? Esse material precisa ser montado como arquivo <span className="font-semibold">.json</span>,
-                que hoje só o administrador importa. Aqui no PDF a IA é mantida enxuta de propósito, pra conseguir entregar
-                sem estourar o tempo do servidor.
-              </span>
-            </p>
             {!perfil?.chaveGemini && (
               <p className="mb-2 flex items-start gap-2 rounded-lg bg-blue-50 p-3 text-xs text-blue-800">
                 <KeyRound className="h-4 w-4 shrink-0" strokeWidth={1.75} />

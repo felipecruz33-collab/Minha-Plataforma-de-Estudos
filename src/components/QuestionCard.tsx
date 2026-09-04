@@ -1,4 +1,4 @@
-import { Star, Trash2 } from 'lucide-react'
+import { EyeOff, Star, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useAuth } from '../lib/auth/AuthContext'
 import { repo } from '../lib/repo'
@@ -26,9 +26,27 @@ interface QuestionCardProps {
    */
   onExcluir?: () => void
   onRespondida?: (correta: boolean) => void
+  /**
+   * Não revelar o resultado assim que a pessoa responde.
+   *
+   * Serve pra quem quer fazer uma sequência de questões sem ser influenciado:
+   * ver o gabarito da questão 1 muda a forma de ler a questão 2. A resposta
+   * continua sendo GRAVADA na hora — o que fica adiado é só a revelação, e é
+   * por isso que sair da tela no meio não perde nada.
+   */
+  correcaoAdiada?: boolean
+  /** Quando true, mostra o resultado mesmo com a correção adiada. */
+  revelada?: boolean
 }
 
-export function QuestionCard({ questao, respostaAnterior, onExcluir, onRespondida }: QuestionCardProps) {
+export function QuestionCard({
+  questao,
+  respostaAnterior,
+  onExcluir,
+  onRespondida,
+  correcaoAdiada = false,
+  revelada = false,
+}: QuestionCardProps) {
   const { user, perfil, toggleFavorito } = useAuth()
   const [escolha, setEscolha] = useState<string | null>(respostaAnterior?.alternativaEscolhida ?? null)
   const [respondida, setRespondida] = useState(!!respostaAnterior)
@@ -44,6 +62,8 @@ export function QuestionCard({ questao, respostaAnterior, onExcluir, onRespondid
   }, [respostaAnterior?.id])
 
   const favorita = perfil?.favoritos.includes(questao.id) ?? false
+  /** Respondida é uma coisa; MOSTRAR o resultado é outra. */
+  const mostrarResultado = respondida && (!correcaoAdiada || revelada)
 
   async function responder(altId: string) {
     if (respondida || !user) return
@@ -94,10 +114,14 @@ export function QuestionCard({ questao, respostaAnterior, onExcluir, onRespondid
           const isEscolha = escolha === alt.id
           const isGabarito = alt.id === questao.gabarito
           let classes = 'border-slate-200 hover:border-brand-blue'
-          if (respondida) {
+          if (mostrarResultado) {
             if (isGabarito) classes = 'border-emerald-400 bg-emerald-50'
             else if (isEscolha) classes = 'border-rose-400 bg-rose-50'
             else classes = 'border-slate-200 opacity-60'
+          } else if (respondida) {
+            // Marcada, sem dizer se está certa. Azul e não verde/vermelho de
+            // propósito: a cor não pode entregar o gabarito.
+            classes = isEscolha ? 'border-brand-blue bg-blue-50' : 'border-slate-200 opacity-60'
           }
           return (
             <button
@@ -114,7 +138,14 @@ export function QuestionCard({ questao, respostaAnterior, onExcluir, onRespondid
         })}
       </div>
 
-      {respondida && (
+      {respondida && !mostrarResultado && (
+        <p className="mt-3 flex items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-medium text-blue-800">
+          <EyeOff className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+          Resposta marcada. A correção aparece quando você pedir.
+        </p>
+      )}
+
+      {mostrarResultado && (
         <div className="mt-3 space-y-2 rounded-lg bg-slate-50 p-3 text-sm">
           <p className={escolha === questao.gabarito ? 'font-semibold text-emerald-700' : 'font-semibold text-rose-700'}>
             {escolha === questao.gabarito ? 'Você acertou!' : `Gabarito: ${questao.gabarito}`}
