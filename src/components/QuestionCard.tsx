@@ -83,7 +83,11 @@ export function QuestionCard({ questao, respostaAnterior, onExcluir, onRespondid
         </button>
       </div>
 
-      <p className="mb-3 text-sm leading-relaxed text-slate-800">{questao.enunciado}</p>
+      {/* `whitespace-pre-line` porque o enunciado pode trazer um TEXTO DE
+          APOIO antes do comando — o poema, a notícia, o trecho de lei que a
+          questão manda ler. Sem isso o HTML come as quebras de linha e o texto
+          inteiro vira um bloco só, colado na pergunta. */}
+      <p className="mb-3 whitespace-pre-line text-sm leading-relaxed text-slate-800">{questao.enunciado}</p>
 
       <div className="space-y-2">
         {questao.alternativas.map((alt) => {

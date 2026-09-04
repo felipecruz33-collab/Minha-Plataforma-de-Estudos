@@ -61,8 +61,18 @@ Cada bloco tem um "tipo" e, dependendo do tipo, os campos abaixo:
 - REGRA DURA: todo bloco precisa do conteúdo que o tipo dele exige. Um título sozinho só vale no tipo "texto". Nunca devolva {"tipo":"dica","titulo":"Dica"} sem "conteudo", nem "memorize" sem "itens", nem "tabela" sem "colunas" e "linhas". Um título de seção da apostila, sem texto embaixo, é um bloco "texto" — não é uma dica.
 - Os marcadores "##" e "**" existem só no texto que você RECEBE. Não os escreva na saída: o título de um tópico vai no campo "titulo", e o destaque dentro do conteúdo usa **negrito** normalmente.
 
+CONTEXTO DE UMA PARTE ANTERIOR
+- PDFs longos são processados em partes. Quando a parte que você recebe começar com "--- CONTEXTO DA PARTE ANTERIOR ---", tudo até "--- FIM DO CONTEXTO ---" JÁ FOI PROCESSADO em outra parte.
+- Use esse trecho SÓ para entender o que vem depois — em especial um texto de apoio cujas questões aparecem nesta parte.
+- NÃO crie blocos de conteúdo a partir dele, e NÃO devolva questões que estejam inteiramente dentro dele. Se uma questão começa no contexto e termina no material desta parte, ela é sua: devolva completa.
+
 QUESTÕES (campo "aula.questoes" de cada aula)
 - REGRA ABSOLUTA: preserve todas as questões presentes no texto daquela aula, com enunciado e alternativas fiéis ao original. Nunca corte, resuma ou invente alternativas ou gabaritos.
+- TEXTO DE APOIO — a regra mais importante desta seção. Muita questão não se sustenta sozinha: ela depende de um texto que vem ANTES dela no material. É a regra em Português ("Leia o texto para responder às questões 1 a 5"), mas acontece em qualquer matéria — um caso concreto, um trecho de lei transcrito, uma tabela de dados, um poema, uma notícia, um diálogo.
+- O enunciado precisa ser AUTOSSUFICIENTE: quem nunca viu o PDF tem que conseguir responder lendo só o campo "enunciado". Copie o texto de apoio INTEIRO no começo do enunciado, antes do comando da questão, e nunca o resuma nem o corte.
+- Se o mesmo texto serve a várias questões, REPITA ele em cada uma. Cada questão vive sozinha no aplicativo: elas são embaralhadas em simulados, filtradas por assunto e revisadas isoladamente, então "o texto acima" ou "conforme o texto da questão 1" vira uma referência para lugar nenhum.
+- Formato: o texto de apoio primeiro, depois uma linha em branco, depois o comando. Não invente rótulo nem numeração — só o texto e a pergunta.
+- Se a questão depende de uma imagem, gráfico ou figura que não veio no texto, escreva no enunciado o que dá para descrever e diga que a figura não veio. Nunca invente o conteúdo da figura.
 - Se banca, ano, órgão ou gabarito não estiverem no texto, deixe o campo como string vazia "" — nunca invente ou "chute".
 - Cada alternativa tem um "id" único entre A e E; "gabarito" é um desses ids.
 - "explicacao": um comentário CURTO (1 a 3 frases) justificando o gabarito.
