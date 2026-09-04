@@ -133,7 +133,15 @@ export interface DataRepository {
    * apagadas também saem do Desempenho, da Revisão e das Erradas — por isso a
    * tela avisa disso antes de confirmar.
    */
-  esquecerRespostas(userId: string, escopo: { materiaId?: string; aulaId?: string }): Promise<void>
+  /**
+   * Apaga as respostas gravadas. O escopo pode ser uma matéria, uma aula, ou
+   * uma lista de questões escolhidas a dedo — `questaoIds` tem prioridade,
+   * porque é a seleção mais específica que a pessoa pode fazer.
+   */
+  esquecerRespostas(
+    userId: string,
+    escopo: { materiaId?: string; aulaId?: string; questaoIds?: string[] },
+  ): Promise<void>
 
   getPerfil(userId: string, email: string): Promise<Perfil>
   atualizarNome(userId: string, nome: string): Promise<Perfil>

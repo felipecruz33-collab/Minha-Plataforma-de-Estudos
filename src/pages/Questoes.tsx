@@ -1,11 +1,13 @@
-import { BookOpenCheck, Eraser, Search } from 'lucide-react'
+import { BookOpenCheck, CheckSquare, Eraser, Eye, Search, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { QuestionCard } from '../components/QuestionCard'
+import { Button } from '../components/ui/Button'
 import { CarregarMais } from '../components/ui/CarregarMais'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAuth } from '../lib/auth/AuthContext'
 import { contemTodasAsPalavras } from '../lib/buscarTexto'
+import { useCorrecaoAdiada } from '../lib/hooks/useCorrecaoAdiada'
 import { useListaVisivel } from '../lib/hooks/useListaVisivel'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo, type MateriaComContagem } from '../lib/repo'
@@ -39,7 +41,7 @@ interface Dados {
   questoes: QuestaoComOrigem[]
 }
 
-type Situacao = '' | 'feitas' | 'nao-feitas'
+type Situacao = '' | 'feitas' | 'nao-feitas' | 'pendentes'
 
 function useSelect() {
   const [value, setValue] = useState('')
@@ -75,6 +77,7 @@ function ultimaRespostaPorQuestao(respostas: Resposta[]): Map<string, Resposta> 
 
 export default function Questoes() {
   const { user, perfil } = useAuth()
+  const correcao = useCorrecaoAdiada(user?.id)
   const [dados, setDados] = useState<Dados | null>(null)
   const [respostas, setRespostas] = useState<Resposta[]>([])
   const [busca, setBusca] = useState('')
@@ -85,6 +88,9 @@ export default function Questoes() {
   const [ano, setAno] = useSelect()
   const [assunto, setAssunto] = useSelect()
   const [confirmandoEsquecer, setConfirmandoEsquecer] = useState(false)
+  /** Seleção manual de questões para apagar a resposta de cada uma. */
+  const [selecionando, setSelecionando] = useState(false)
+  const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set())
   const [esquecendo, setEsquecendo] = useState(false)
   const [aExcluir, setAExcluir] = useState<QuestaoComOrigem | null>(null)
 
@@ -153,6 +159,7 @@ export default function Questoes() {
         const feita = respostaPorQuestao.has(q.id)
         if (situacao === 'feitas' && !feita) return false
         if (situacao === 'nao-feitas' && feita) return false
+        if (situacao === 'pendentes' && !correcao.pendentes.has(q.id)) return false
       }
       if (banca && q.banca !== banca) return false
       if (ano && q.ano !== ano) return false
@@ -173,7 +180,7 @@ export default function Questoes() {
       }
       return true
     })
-  }, [questoes, respostaPorQuestao, busca, materiaId, aulaId, situacao, banca, ano, assunto])
+  }, [questoes, respostaPorQuestao, busca, materiaId, aulaId, situacao, banca, ano, assunto, correcao.pendentes])
 
   const { visiveis, total, temMais, verMais } = useListaVisivel(filtradas)
 
@@ -204,6 +211,38 @@ export default function Questoes() {
     : materiaId
       ? dados?.materias.find((m) => m.id === materiaId)?.rotulo
       : null
+
+  function alternarSelecao(questaoId: string) {
+    setSelecionadas((atual) => {
+      const novo = new Set(atual)
+      if (novo.has(questaoId)) novo.delete(questaoId)
+      else novo.add(questaoId)
+      return novo
+    })
+  }
+
+  /** Só faz sentido selecionar o que TEM resposta gravada pra apagar. */
+  const visiveisComResposta = useMemo(
+    () => filtradas.filter((q) => respostaPorQuestao.has(q.id)).map((q) => q.id),
+    [filtradas, respostaPorQuestao],
+  )
+
+  function sairDaSelecao() {
+    setSelecionando(false)
+    setSelecionadas(new Set())
+  }
+
+  async function esquecerSelecionadas() {
+    if (!user || selecionadas.size === 0) return
+    setEsquecendo(true)
+    try {
+      await repo.esquecerRespostas(user.id, { questaoIds: [...selecionadas] })
+      setRespostas(await repo.listRespostas(user.id))
+      sairDaSelecao()
+    } finally {
+      setEsquecendo(false)
+    }
+  }
 
   async function esquecer() {
     setConfirmandoEsquecer(false)
@@ -308,6 +347,7 @@ export default function Questoes() {
           <option value="">Feitas e não feitas</option>
           <option value="nao-feitas">Só as não feitas</option>
           <option value="feitas">Só as já feitas</option>
+          {correcao.pendentes.size > 0 && <option value="pendentes">Só as que faltam corrigir</option>}
         </select>
 
         <select value={banca} onChange={(e) => setBanca(e.target.value)} className={selectCls}>
@@ -336,10 +376,85 @@ export default function Questoes() {
         </select>
       </div>
 
+      {/* Correção na hora x correção depois.
+          Quem faz uma bateria não quer o gabarito da primeira antes de ler a
+          segunda — o gabarito muda a forma de ler o que vem depois. */}
+      <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+        <label className="flex cursor-pointer items-start gap-2.5">
+          <input
+            type="checkbox"
+            checked={correcao.adiada}
+            onChange={(e) => correcao.setAdiada(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-blue"
+          />
+          <span className="text-xs text-slate-600">
+            <span className="font-semibold text-navy">Corrigir só quando eu pedir.</span> A resposta é gravada na hora,
+            mas o gabarito e o comentário ficam escondidos até você mandar corrigir — dá pra fazer uma sequência inteira
+            sem que uma questão entregue a próxima.
+          </span>
+        </label>
+
+        {correcao.pendentes.size > 0 && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3">
+            <p className="text-xs text-slate-600">
+              <strong className="text-navy">{correcao.pendentes.size}</strong>{' '}
+              {correcao.pendentes.size === 1 ? 'questão respondida esperando' : 'questões respondidas esperando'}{' '}
+              correção.
+            </p>
+            <div className="flex gap-2">
+              {situacao !== 'pendentes' && (
+                <Button variant="secondary" onClick={() => setSituacao('pendentes')} className="px-3 py-1.5 text-xs">
+                  Ver só elas
+                </Button>
+              )}
+              <Button onClick={correcao.revelarTodas} className="px-3 py-1.5 text-xs">
+                <Eye className="h-3.5 w-3.5" strokeWidth={2} />
+                Corrigir agora
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Discreto de propósito: é uma ação de apagar, e quem não está
           procurando por ela não deve tropeçar nela. Some quando não há nada
           marcado no escopo, pra não oferecer uma ação que não faria nada. */}
       <div className="mb-5 mt-2 min-h-[1.25rem]">
+        {selecionando ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-2">
+            <span className="text-sm text-slate-600">
+              <strong className="text-navy">{selecionadas.size}</strong>{' '}
+              {selecionadas.size === 1 ? 'selecionada' : 'selecionadas'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelecionadas(new Set(visiveisComResposta))}
+              className="text-xs font-medium text-brand-blue hover:underline"
+            >
+              marcar todas da lista
+            </button>
+            {selecionadas.size > 0 && (
+              <button type="button" onClick={() => setSelecionadas(new Set())} className="text-xs font-medium text-slate-400 hover:underline">
+                limpar
+              </button>
+            )}
+            <div className="ml-auto flex gap-2">
+              <Button variant="secondary" onClick={sairDaSelecao} className="px-3 py-1.5 text-xs">
+                <X className="h-3.5 w-3.5" strokeWidth={2} />
+                Cancelar
+              </Button>
+              <Button
+                onClick={esquecerSelecionadas}
+                disabled={selecionadas.size === 0 || esquecendo}
+                className="px-3 py-1.5 text-xs"
+              >
+                <Eraser className="h-3.5 w-3.5" strokeWidth={2} />
+                {esquecendo ? 'Esquecendo…' : 'Esquecer as selecionadas'}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
         {marcadasNoEscopo > 0 && (
           <button
             type="button"
@@ -355,6 +470,19 @@ export default function Questoes() {
                 }`}
           </button>
         )}
+            {/* A alternativa precisa: apagar UMA a uma, escolhendo. */}
+            {visiveisComResposta.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelecionando(true)}
+                className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-navy"
+              >
+                <CheckSquare className="h-4 w-4" strokeWidth={1.75} />
+                Escolher quais esquecer
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {dados === null ? (
@@ -367,22 +495,48 @@ export default function Questoes() {
         />
       ) : (
         <div className="space-y-3">
-          {visiveis.map((q) => (
-            <div key={q.id} className="relative">
-              <span
-                className={`absolute right-4 top-4 z-10 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                  q.origem === 'biblioteca' ? 'bg-brand-gradient text-white' : 'bg-slate-100 text-slate-500'
-                }`}
-              >
-                {q.origem === 'biblioteca' ? 'Biblioteca' : 'Minha'}
-              </span>
-              <QuestionCard
-                questao={q}
-                respostaAnterior={respostaPorQuestao.get(q.id) ?? null}
-                onExcluir={podeExcluir(q) ? () => setAExcluir(q) : undefined}
-              />
-            </div>
-          ))}
+          {visiveis.map((q) => {
+            const temResposta = respostaPorQuestao.has(q.id)
+            return (
+              <div key={q.id} className="relative">
+                {/* No modo de seleção a caixa fica ACIMA do cartão, não dentro:
+                    o cartão é o mesmo componente de cinco telas, e enfiar uma
+                    seleção que só existe aqui dentro dele espalharia esta tela
+                    pelas outras quatro. */}
+                {selecionando && (
+                  <label
+                    className={`mb-1 flex items-center gap-2 text-xs font-medium ${
+                      temResposta ? 'cursor-pointer text-slate-600' : 'cursor-not-allowed text-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      disabled={!temResposta}
+                      checked={selecionadas.has(q.id)}
+                      onChange={() => alternarSelecao(q.id)}
+                      className="h-4 w-4 rounded border-slate-300 text-brand-blue disabled:opacity-40"
+                    />
+                    {temResposta ? 'Esquecer a resposta desta' : 'Sem resposta gravada'}
+                  </label>
+                )}
+                <span
+                  className={`absolute right-4 z-10 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                    selecionando ? 'top-9' : 'top-4'
+                  } ${q.origem === 'biblioteca' ? 'bg-brand-gradient text-white' : 'bg-slate-100 text-slate-500'}`}
+                >
+                  {q.origem === 'biblioteca' ? 'Biblioteca' : 'Minha'}
+                </span>
+                <QuestionCard
+                  questao={q}
+                  respostaAnterior={respostaPorQuestao.get(q.id) ?? null}
+                  onExcluir={podeExcluir(q) ? () => setAExcluir(q) : undefined}
+                  correcaoAdiada={correcao.adiada}
+                  revelada={!correcao.pendentes.has(q.id)}
+                  onRespondida={() => correcao.adiada && correcao.marcarPendente(q.id)}
+                />
+              </div>
+            )
+          })}
           <CarregarMais mostrando={visiveis.length} total={total} temMais={temMais} onVerMais={verMais} />
         </div>
       )}

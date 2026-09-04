@@ -262,10 +262,16 @@ export class LocalRepository implements DataRepository {
     return nova
   }
 
-  async esquecerRespostas(userId: string, escopo: { materiaId?: string; aulaId?: string }): Promise<void> {
+  async esquecerRespostas(
+    userId: string,
+    escopo: { materiaId?: string; aulaId?: string; questaoIds?: string[] },
+  ): Promise<void> {
+    if (escopo.questaoIds && escopo.questaoIds.length === 0) return
+    const escolhidas = escopo.questaoIds ? new Set(escopo.questaoIds) : null
     const s = load()
     s.respostas = s.respostas.filter((r) => {
       if (r.userId !== userId) return true
+      if (escolhidas) return !escolhidas.has(r.questaoId)
       if (escopo.aulaId) return r.aulaId !== escopo.aulaId
       if (escopo.materiaId) return r.materiaId !== escopo.materiaId
       return false
