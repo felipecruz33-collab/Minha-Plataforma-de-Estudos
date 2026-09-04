@@ -1,4 +1,4 @@
-import { BookOpenCheck, CheckSquare, Eraser, Eye, Search, X } from 'lucide-react'
+import { ArrowLeft, BookOpenCheck, CheckSquare, Eraser, Eye, Search, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { QuestionCard } from '../components/QuestionCard'
 import { Button } from '../components/ui/Button'
@@ -92,6 +92,8 @@ export default function Questoes() {
   const [selecionando, setSelecionando] = useState(false)
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set())
   const [esquecendo, setEsquecendo] = useState(false)
+  const [corrigindo, setCorrigindo] = useState(false)
+  const [erroAoCorrigir, setErroAoCorrigir] = useState<string | null>(null)
   const [aExcluir, setAExcluir] = useState<QuestaoComOrigem | null>(null)
 
   useEffect(() => {
@@ -159,7 +161,10 @@ export default function Questoes() {
         const feita = respostaPorQuestao.has(q.id)
         if (situacao === 'feitas' && !feita) return false
         if (situacao === 'nao-feitas' && feita) return false
-        if (situacao === 'pendentes' && !correcao.pendentes.has(q.id)) return false
+        // Também o que acabou de ser corrigido: mandar corrigir tem que
+        // ENTREGAR a correção, e não fechar a lista na cara de quem pediu.
+        if (situacao === 'pendentes' && !correcao.rascunhos.has(q.id) && !correcao.reveladasAgora.has(q.id))
+          return false
       }
       if (banca && q.banca !== banca) return false
       if (ano && q.ano !== ano) return false
@@ -180,7 +185,7 @@ export default function Questoes() {
       }
       return true
     })
-  }, [questoes, respostaPorQuestao, busca, materiaId, aulaId, situacao, banca, ano, assunto, correcao.pendentes])
+  }, [questoes, respostaPorQuestao, busca, materiaId, aulaId, situacao, banca, ano, assunto, correcao.rascunhos, correcao.reveladasAgora])
 
   const { visiveis, total, temMais, verMais } = useListaVisivel(filtradas)
 
@@ -211,6 +216,65 @@ export default function Questoes() {
     : materiaId
       ? dados?.materias.find((m) => m.id === materiaId)?.rotulo
       : null
+
+  const questaoPorId = useMemo(() => new Map(questoes.map((q) => [q.id, q])), [questoes])
+
+  /**
+   * Grava tudo o que estava em rascunho e revela.
+   *
+   * É aqui que o palpite vira tentativa: uma escrita só para a bateria
+   * inteira, com a hora em que cada questão foi marcada — quem respondeu à
+   * noite e corrigiu de manhã não vê o estudo de ontem virar estudo de hoje.
+   * Depois de gravar, a lista é relida do repositório, e é ela que faz os
+   * cartões mostrarem o gabarito.
+   */
+  async function corrigirAgora() {
+    if (!user || correcao.rascunhos.size === 0) return
+    setCorrigindo(true)
+    setErroAoCorrigir(null)
+    try {
+      const paraGravar = []
+      for (const r of correcao.rascunhos.values()) {
+        const q = questaoPorId.get(r.questaoId)
+        // Questão apagada ou reimportada no meio do caminho: o rascunho perdeu
+        // o dono e some junto, em vez de virar uma resposta órfã.
+        if (!q) continue
+        paraGravar.push({
+          userId: user.id,
+          questaoId: r.questaoId,
+          aulaId: r.aulaId,
+          materiaId: r.materiaId,
+          alternativaEscolhida: r.alternativaEscolhida,
+          // O acerto é decidido AQUI, contra o gabarito de agora, e não fica
+          // guardado junto do rascunho: nada que dê a resposta precisa passear
+          // pelo armazenamento do navegador.
+          correta: r.alternativaEscolhida === q.gabarito,
+          respondidoEm: r.marcadoEm,
+        })
+      }
+      await repo.registrarRespostas(paraGravar)
+      setRespostas(await repo.listRespostas(user.id))
+      correcao.marcarReveladas(paraGravar.map((r) => r.questaoId))
+      correcao.limparRascunhos()
+    } catch {
+      setErroAoCorrigir('Não foi possível registrar as respostas. Tente de novo em instantes.')
+    } finally {
+      setCorrigindo(false)
+    }
+  }
+
+  /**
+   * Volta para a lista inteira sem recarregar a página.
+   *
+   * Existe porque "só as que faltam corrigir" é uma lista que se esvazia
+   * sozinha: quando a última é corrigida não sobra nada para o filtro, e a
+   * opção que levou até ali desapareceria do select junto — a única saída
+   * seria dar F5.
+   */
+  function voltarParaTodas() {
+    setSituacao('')
+    correcao.limparReveladas()
+  }
 
   function alternarSelecao(questaoId: string) {
     setSelecionadas((atual) => {
@@ -343,11 +407,28 @@ export default function Questoes() {
           ))}
         </select>
 
-        <select value={situacao} onChange={(e) => setSituacao(e.target.value as Situacao)} className={selectCls}>
+        <select
+          value={situacao}
+          onChange={(e) => {
+            const nova = e.target.value as Situacao
+            // Saiu da lista de pendentes por conta própria: o rastro do que foi
+            // corrigido agora já cumpriu o papel e não precisa envelhecer aqui.
+            if (situacao === 'pendentes' && nova !== 'pendentes') correcao.limparReveladas()
+            setSituacao(nova)
+          }}
+          className={selectCls}
+        >
           <option value="">Feitas e não feitas</option>
           <option value="nao-feitas">Só as não feitas</option>
           <option value="feitas">Só as já feitas</option>
-          {correcao.pendentes.size > 0 && <option value="pendentes">Só as que faltam corrigir</option>}
+          {/* Continua na lista enquanto ela estiver aberta, mesmo com a fila já
+              zerada: sumir com a opção selecionada deixaria o select mostrando
+              um filtro que não existe mais. */}
+          {(correcao.rascunhos.size > 0 || situacao === 'pendentes') && (
+            <option value="pendentes">
+              {correcao.rascunhos.size > 0 ? 'Só as que faltam corrigir' : 'Só as que acabei de corrigir'}
+            </option>
+          )}
         </select>
 
         <select value={banca} onChange={(e) => setBanca(e.target.value)} className={selectCls}>
@@ -384,36 +465,62 @@ export default function Questoes() {
           <input
             type="checkbox"
             checked={correcao.adiada}
-            onChange={(e) => correcao.setAdiada(e.target.checked)}
+            disabled={corrigindo}
+            onChange={async (e) => {
+              const ligar = e.target.checked
+              // Desligar com rascunho na mesa grava tudo antes: seria estranho
+              // pedir correção na hora e ver dez marcações sumirem sem virar
+              // resposta nenhuma.
+              if (!ligar && correcao.rascunhos.size > 0) await corrigirAgora()
+              correcao.setAdiada(ligar)
+            }}
             className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-blue"
           />
           <span className="text-xs text-slate-600">
-            <span className="font-semibold text-navy">Corrigir só quando eu pedir.</span> A resposta é gravada na hora,
-            mas o gabarito e o comentário ficam escondidos até você mandar corrigir — dá pra fazer uma sequência inteira
-            sem que uma questão entregue a próxima.
+            <span className="font-semibold text-navy">Corrigir só quando eu pedir.</span> A alternativa que você marcar
+            fica em rascunho e <strong className="text-navy">pode ser trocada</strong> — o gabarito, o comentário e o
+            registro da resposta só acontecem quando você mandar corrigir. Dá pra fazer uma sequência inteira sem que
+            uma questão entregue a próxima, e sem que um chute do começo conte contra você.
           </span>
         </label>
 
-        {correcao.pendentes.size > 0 && (
+        {(correcao.rascunhos.size > 0 || (situacao === 'pendentes' && correcao.reveladasAgora.size > 0)) && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3">
-            <p className="text-xs text-slate-600">
-              <strong className="text-navy">{correcao.pendentes.size}</strong>{' '}
-              {correcao.pendentes.size === 1 ? 'questão respondida esperando' : 'questões respondidas esperando'}{' '}
-              correção.
-            </p>
+            {correcao.rascunhos.size > 0 ? (
+              <p className="text-xs text-slate-600">
+                <strong className="text-navy">{correcao.rascunhos.size}</strong>{' '}
+                {correcao.rascunhos.size === 1 ? 'questão marcada esperando' : 'questões marcadas esperando'} correção.
+                Dá pra trocar qualquer uma até aqui.
+              </p>
+            ) : (
+              <p className="text-xs text-slate-600">
+                <strong className="text-emerald-700">Corrigidas.</strong> As{' '}
+                <strong className="text-navy">{correcao.reveladasAgora.size}</strong>{' '}
+                {correcao.reveladasAgora.size === 1 ? 'questão continua' : 'questões continuam'} aqui com o gabarito e os
+                comentários — leia com calma e volte quando quiser.
+              </p>
+            )}
             <div className="flex gap-2">
-              {situacao !== 'pendentes' && (
+              {situacao === 'pendentes' ? (
+                <Button variant="secondary" onClick={voltarParaTodas} className="px-3 py-1.5 text-xs">
+                  <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} />
+                  Voltar para todas
+                </Button>
+              ) : (
                 <Button variant="secondary" onClick={() => setSituacao('pendentes')} className="px-3 py-1.5 text-xs">
                   Ver só elas
                 </Button>
               )}
-              <Button onClick={correcao.revelarTodas} className="px-3 py-1.5 text-xs">
-                <Eye className="h-3.5 w-3.5" strokeWidth={2} />
-                Corrigir agora
-              </Button>
+              {correcao.rascunhos.size > 0 && (
+                <Button onClick={corrigirAgora} disabled={corrigindo} className="px-3 py-1.5 text-xs">
+                  <Eye className="h-3.5 w-3.5" strokeWidth={2} />
+                  {corrigindo ? 'Corrigindo…' : 'Corrigir agora'}
+                </Button>
+              )}
             </div>
           </div>
         )}
+        {erroAoCorrigir && <p className="mt-2 text-xs text-rose-600">{erroAoCorrigir}</p>}
       </div>
 
       {/* Discreto de propósito: é uma ação de apagar, e quem não está
@@ -490,9 +597,24 @@ export default function Questoes() {
       ) : filtradas.length === 0 ? (
         <EmptyState
           icon={BookOpenCheck}
-          title="Nenhuma questão encontrada"
-          description={situacao === 'nao-feitas' ? 'Você já respondeu todas as questões desta seleção.' : undefined}
-        />
+          title={situacao === 'pendentes' ? 'Nada esperando correção' : 'Nenhuma questão encontrada'}
+          description={
+            situacao === 'pendentes'
+              ? 'Todas as respostas desta seleção já foram corrigidas.'
+              : situacao === 'nao-feitas'
+                ? 'Você já respondeu todas as questões desta seleção.'
+                : undefined
+          }
+        >
+          {/* A saída fica dentro do próprio vazio: é justamente aqui que a
+              pessoa fica sem nada para clicar. */}
+          {situacao === 'pendentes' && (
+            <Button variant="secondary" onClick={voltarParaTodas} className="px-3 py-1.5 text-xs">
+              <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} />
+              Voltar para todas as questões
+            </Button>
+          )}
+        </EmptyState>
       ) : (
         <div className="space-y-3">
           {visiveis.map((q) => {
@@ -530,9 +652,19 @@ export default function Questoes() {
                   questao={q}
                   respostaAnterior={respostaPorQuestao.get(q.id) ?? null}
                   onExcluir={podeExcluir(q) ? () => setAExcluir(q) : undefined}
-                  correcaoAdiada={correcao.adiada}
-                  revelada={!correcao.pendentes.has(q.id)}
-                  onRespondida={() => correcao.adiada && correcao.marcarPendente(q.id)}
+                  rascunho={correcao.rascunhos.get(q.id)?.alternativaEscolhida ?? null}
+                  onMarcarRascunho={
+                    correcao.adiada && !temResposta
+                      ? (alternativaEscolhida) =>
+                          correcao.marcarRascunho({
+                            questaoId: q.id,
+                            aulaId: q.aulaId,
+                            materiaId: q.materiaId,
+                            alternativaEscolhida,
+                            marcadoEm: new Date().toISOString(),
+                          })
+                      : undefined
+                  }
                 />
               </div>
             )

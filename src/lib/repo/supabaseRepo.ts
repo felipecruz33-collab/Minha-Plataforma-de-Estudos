@@ -2,7 +2,7 @@ import { supabase } from '../supabaseClient'
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
 import type { Aula, AulaImportPayload, Bloco, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
-import type { AulaBasica, AulaComQuestoes, BackupData, DataRepository, MateriaComContagem } from './types'
+import type { AulaBasica, AulaComQuestoes, BackupData, DataRepository, MateriaComContagem, RespostaParaGravar } from './types'
 
 function questaoDaLinha(q: any): Questao {
   return {
@@ -360,30 +360,40 @@ export class SupabaseRepository implements DataRepository {
     )
   }
 
-  async registrarResposta(resposta: Omit<Resposta, 'id' | 'respondidoEm'>): Promise<Resposta> {
+  async registrarResposta(resposta: RespostaParaGravar): Promise<Resposta> {
+    const [gravada] = await this.registrarRespostas([resposta])
+    return gravada
+  }
+
+  async registrarRespostas(respostas: RespostaParaGravar[]): Promise<Resposta[]> {
+    if (respostas.length === 0) return []
     const { data, error } = await this.db()
       .from('respostas')
-      .insert({
-        user_id: resposta.userId,
-        questao_id: resposta.questaoId,
-        aula_id: resposta.aulaId,
-        materia_id: resposta.materiaId,
-        alternativa_escolhida: resposta.alternativaEscolhida,
-        correta: resposta.correta,
-      })
+      .insert(
+        respostas.map((r) => ({
+          user_id: r.userId,
+          questao_id: r.questaoId,
+          aula_id: r.aulaId,
+          materia_id: r.materiaId,
+          alternativa_escolhida: r.alternativaEscolhida,
+          correta: r.correta,
+          // Só quando a tela sabe a hora certa. Sem isto o banco carimba
+          // `now()`, que é o certo para quem responde e vê o resultado na hora.
+          ...(r.respondidoEm ? { respondido_em: r.respondidoEm } : {}),
+        })),
+      )
       .select()
-      .single()
     if (error) throw error
-    return {
-      id: data.id,
-      userId: data.user_id,
-      questaoId: data.questao_id,
-      aulaId: data.aula_id,
-      materiaId: data.materia_id,
-      alternativaEscolhida: data.alternativa_escolhida,
-      correta: data.correta,
-      respondidoEm: data.respondido_em,
-    }
+    return (data ?? []).map((d) => ({
+      id: d.id,
+      userId: d.user_id,
+      questaoId: d.questao_id,
+      aulaId: d.aula_id,
+      materiaId: d.materia_id,
+      alternativaEscolhida: d.alternativa_escolhida,
+      correta: d.correta,
+      respondidoEm: d.respondido_em,
+    }))
   }
 
   async esquecerRespostas(

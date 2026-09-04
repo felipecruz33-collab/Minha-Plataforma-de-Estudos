@@ -1,5 +1,5 @@
 import type { Aula, AulaImportPayload, Cronograma, GeracaoIA, Materia, Perfil, Resposta, Simulado } from '../types'
-import type { AulaComQuestoes, BackupData, DataRepository, MateriaComContagem } from './types'
+import type { AulaComQuestoes, BackupData, DataRepository, MateriaComContagem, RespostaParaGravar } from './types'
 
 /**
  * Quanto tempo uma leitura vale antes de ser buscada de novo.
@@ -166,8 +166,11 @@ export class CachedRepository implements DataRepository {
   reordenarAulas(materiaId: string, aulaIdsEmOrdem: string[]) {
     return this.escrever(() => this.base.reordenarAulas(materiaId, aulaIdsEmOrdem))
   }
-  registrarResposta(resposta: Omit<Resposta, 'id' | 'respondidoEm'>) {
+  registrarResposta(resposta: RespostaParaGravar) {
     return this.escrever(() => this.base.registrarResposta(resposta))
+  }
+  registrarRespostas(respostas: RespostaParaGravar[]) {
+    return this.escrever(() => this.base.registrarRespostas(respostas))
   }
   excluirQuestao(questaoId: string) {
     return this.escrever(() => this.base.excluirQuestao(questaoId))

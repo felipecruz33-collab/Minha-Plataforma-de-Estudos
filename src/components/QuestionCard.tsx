@@ -27,16 +27,21 @@ interface QuestionCardProps {
   onExcluir?: () => void
   onRespondida?: (correta: boolean) => void
   /**
-   * Não revelar o resultado assim que a pessoa responde.
+   * Modo rascunho: marcar sem gravar, e poder trocar até mandar corrigir.
    *
-   * Serve pra quem quer fazer uma sequência de questões sem ser influenciado:
-   * ver o gabarito da questão 1 muda a forma de ler a questão 2. A resposta
-   * continua sendo GRAVADA na hora — o que fica adiado é só a revelação, e é
-   * por isso que sair da tela no meio não perde nada.
+   * Quando este callback vem, o cartão para de gravar no clique e para de
+   * travar depois dele. A escolha vira um rascunho que mora na tela de
+   * Questões, e a pessoa pode mudar de ideia quantas vezes quiser — porque
+   * enquanto o gabarito não apareceu ela não recebeu nenhuma informação nova,
+   * e a marca anterior não era uma tentativa, era um palpite em aberto. A
+   * gravação acontece uma vez só, quando ela mandar corrigir.
+   *
+   * Serve pra quem quer fazer uma sequência sem ser influenciado: ver o
+   * gabarito da questão 1 muda a forma de ler a questão 2.
    */
-  correcaoAdiada?: boolean
-  /** Quando true, mostra o resultado mesmo com a correção adiada. */
-  revelada?: boolean
+  onMarcarRascunho?: (alternativaId: string) => void
+  /** A alternativa marcada em rascunho, se houver. */
+  rascunho?: string | null
 }
 
 export function QuestionCard({
@@ -44,8 +49,8 @@ export function QuestionCard({
   respostaAnterior,
   onExcluir,
   onRespondida,
-  correcaoAdiada = false,
-  revelada = false,
+  onMarcarRascunho,
+  rascunho = null,
 }: QuestionCardProps) {
   const { user, perfil, toggleFavorito } = useAuth()
   const [escolha, setEscolha] = useState<string | null>(respostaAnterior?.alternativaEscolhida ?? null)
@@ -62,14 +67,36 @@ export function QuestionCard({
   }, [respostaAnterior?.id])
 
   const favorita = perfil?.favoritos.includes(questao.id) ?? false
-  /** Respondida é uma coisa; MOSTRAR o resultado é outra. */
-  const mostrarResultado = respondida && (!correcaoAdiada || revelada)
+  /**
+   * Em rascunho só enquanto NÃO existe resposta gravada: depois de corrigida a
+   * questão está fechada, e o cartão volta a ser o de sempre.
+   *
+   * O `!respondida` cobre quem responde no modo normal e SÓ DEPOIS liga a
+   * caixa de adiar: a tela ainda não releu as respostas, então ela mandaria o
+   * cartão para o rascunho — o resultado que já estava na tela sumiria, e a
+   * questão voltaria a aceitar clique, virando uma segunda tentativa por cima
+   * de uma que já valeu.
+   */
+  const emRascunho = !!onMarcarRascunho && !respostaAnterior && !respondida
+  const escolhaAtual = emRascunho ? rascunho : escolha
+  const marcada = emRascunho ? !!rascunho : respondida
+  /** Marcada é uma coisa; MOSTRAR o resultado é outra. */
+  const mostrarResultado = !emRascunho && respondida
 
   async function responder(altId: string) {
     if (respondida || !user) return
+    const correta = altId === questao.gabarito
     setEscolha(altId)
     setRespondida(true)
-    const correta = altId === questao.gabarito
+    // Avisar o pai ANTES de gravar, e não depois, não é detalhe de estilo: é o
+    // que faz a correção adiada funcionar. É este aviso que põe a questão na
+    // fila de pendentes, e é de lá que sai o `revelada`. Com ele depois do
+    // `await`, entre o clique e a volta do banco existia um render com
+    // `respondida` já true e `revelada` ainda true: o verde/vermelho piscava na
+    // tela antes de sumir — e meio segundo de verde já entrega o gabarito, que
+    // é exatamente o que a pessoa pediu para não ver. Assim as duas mudanças de
+    // estado caem no mesmo render e nada chega a aparecer.
+    onRespondida?.(correta)
     await repo.registrarResposta({
       userId: user.id,
       questaoId: questao.id,
@@ -78,7 +105,6 @@ export function QuestionCard({
       alternativaEscolhida: altId,
       correta,
     })
-    onRespondida?.(correta)
   }
 
   const metaInfo = [questao.banca, questao.orgao, questao.ano].filter(Boolean).join(' · ')
@@ -111,24 +137,30 @@ export function QuestionCard({
 
       <div className="space-y-2">
         {questao.alternativas.map((alt) => {
-          const isEscolha = escolha === alt.id
+          const isEscolha = escolhaAtual === alt.id
           const isGabarito = alt.id === questao.gabarito
           let classes = 'border-slate-200 hover:border-brand-blue'
           if (mostrarResultado) {
             if (isGabarito) classes = 'border-emerald-400 bg-emerald-50'
             else if (isEscolha) classes = 'border-rose-400 bg-rose-50'
             else classes = 'border-slate-200 opacity-60'
-          } else if (respondida) {
+          } else if (marcada) {
             // Marcada, sem dizer se está certa. Azul e não verde/vermelho de
-            // propósito: a cor não pode entregar o gabarito.
-            classes = isEscolha ? 'border-brand-blue bg-blue-50' : 'border-slate-200 opacity-60'
+            // propósito: a cor não pode entregar o gabarito. Em rascunho as
+            // outras continuam clicáveis — trocar é o ponto — então elas não
+            // ficam apagadas como ficam depois de gravada.
+            classes = isEscolha
+              ? 'border-brand-blue bg-blue-50'
+              : emRascunho
+                ? 'border-slate-200 hover:border-brand-blue'
+                : 'border-slate-200 opacity-60'
           }
           return (
             <button
               key={alt.id}
               type="button"
-              disabled={respondida}
-              onClick={() => responder(alt.id)}
+              disabled={!emRascunho && respondida}
+              onClick={() => (emRascunho ? onMarcarRascunho?.(alt.id) : responder(alt.id))}
               className={`flex w-full items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors disabled:cursor-default ${classes}`}
             >
               <span className="font-bold text-navy">{alt.id}</span>
@@ -138,10 +170,10 @@ export function QuestionCard({
         })}
       </div>
 
-      {respondida && !mostrarResultado && (
+      {emRascunho && rascunho && (
         <p className="mt-3 flex items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-medium text-blue-800">
           <EyeOff className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
-          Resposta marcada. A correção aparece quando você pedir.
+          Marcada a <strong>{rascunho}</strong> — pode trocar. A resposta só é registrada quando você mandar corrigir.
         </p>
       )}
 
