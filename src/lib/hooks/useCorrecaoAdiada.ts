@@ -1,22 +1,48 @@
 import { useCallback, useEffect, useState } from 'react'
 
 /**
- * Correção adiada: responder agora, ver o resultado depois.
+ * Correção adiada: marcar agora, corrigir depois — e poder mudar de ideia no
+ * meio.
  *
  * Quem faz uma bateria de 50 questões não quer o gabarito da primeira antes de
- * ler a segunda — o gabarito muda a forma de ler o que vem depois. Então a
- * resposta é GRAVADA na hora (estatística, ciclo de revisão e desempenho
- * seguem certos, e sair da tela no meio não perde nada) e o que fica adiado é
- * só a revelação.
+ * ler a segunda: o gabarito muda a forma de ler o que vem depois. Então, com o
+ * modo ligado, marcar uma alternativa NÃO grava nada. Fica um rascunho, e a
+ * pessoa pode trocar quantas vezes quiser até mandar corrigir.
  *
- * Mora no navegador, não no perfil, por dois motivos: é preferência de estudo,
- * não dado da conta; e assim não exige migração nem uma ida ao banco a cada
- * questão respondida — numa bateria de 50, seriam 50 escritas só pra lembrar o
- * que já está na tela.
+ * Não gravar na hora é a parte que importa, e não é preguiça de escrever no
+ * banco: enquanto o gabarito não apareceu, a pessoa não recebeu nenhuma
+ * informação nova, então a marca anterior nunca foi uma tentativa — era um
+ * palpite em aberto. Se ela virasse resposta gravada, uma questão que a pessoa
+ * repensou e corrigiu sozinha já teria entrado no ciclo de revisão como erro,
+ * e o Desempenho contaria duas tentativas onde houve uma. A tentativa nasce no
+ * momento em que a correção é pedida — que é exatamente o momento em que a
+ * pessoa se compromete com a resposta.
+ *
+ * Mora no navegador, não no perfil, por dois motivos: é preferência e rascunho
+ * de estudo, não dado da conta; e assim uma bateria inteira custa uma escrita
+ * no banco em vez de cinquenta.
  */
 
 const CHAVE_MODO = 'mpe:correcao-adiada'
-const CHAVE_PENDENTES = 'mpe:correcao-pendentes'
+const CHAVE_RASCUNHOS = 'mpe:correcao-rascunhos'
+/** Versão anterior guardava só ids de questões já gravadas. Não serve mais. */
+const CHAVE_ANTIGA = 'mpe:correcao-pendentes'
+
+export interface RascunhoResposta {
+  questaoId: string
+  aulaId: string
+  materiaId: string
+  alternativaEscolhida: string
+  /**
+   * Quando a pessoa marcou.
+   *
+   * A resposta conta no dia em que foi DADA, não no dia em que foi corrigida:
+   * quem marca trinta questões à noite e manda corrigir de manhã não pode ver
+   * o estudo de ontem aparecer como se fosse de hoje no extrato e no caderno
+   * do mês.
+   */
+  marcadoEm: string
+}
 
 function ler<T>(chave: string, padrao: T): T {
   try {
@@ -39,79 +65,81 @@ function gravar(chave: string, valor: unknown) {
 
 export function useCorrecaoAdiada(userId: string | undefined) {
   const chaveModo = `${CHAVE_MODO}:${userId ?? 'anon'}`
-  const chavePendentes = `${CHAVE_PENDENTES}:${userId ?? 'anon'}`
+  const chaveRascunhos = `${CHAVE_RASCUNHOS}:${userId ?? 'anon'}`
 
   const [adiada, setAdiadaInterno] = useState(false)
-  const [pendentes, setPendentes] = useState<Set<string>>(new Set())
+  const [rascunhos, setRascunhos] = useState<Map<string, RascunhoResposta>>(new Map())
   /**
    * O que saiu da fila AGORA, nesta visita à tela.
    *
-   * Sem isto, mandar corrigir esvaziava a fila e a lista "só as que faltam
-   * corrigir" ficava vazia no mesmo instante — a pessoa pedia a correção e as
-   * questões sumiam antes de ela conseguir ler um comentário sequer. Pedir
-   * correção tem que ENTREGAR a correção, não fechar a lista.
+   * Sem isto, mandar corrigir esvaziaria a fila e a lista "só as que faltam
+   * corrigir" ficaria vazia no mesmo instante — a pessoa pediria a correção e
+   * as questões sumiriam antes de ela ler um comentário sequer. Pedir correção
+   * tem que ENTREGAR a correção, não fechar a lista.
    *
    * Fica só na memória, de propósito: é o rastro de uma sessão de estudo, não
    * um dado da conta. Recarregar a página começa do zero, que é o esperado.
    */
   const [reveladasAgora, setReveladasAgora] = useState<Set<string>>(new Set())
 
-  // Carrega quando o usuário fica conhecido. Sem isso a preferência de uma
-  // conta apareceria na sessão da outra no mesmo navegador.
+  // Carrega quando o usuário fica conhecido. Sem isso o rascunho de uma conta
+  // apareceria na sessão da outra no mesmo navegador.
   useEffect(() => {
     setAdiadaInterno(ler(chaveModo, false))
-    setPendentes(new Set(ler<string[]>(chavePendentes, [])))
-  }, [chaveModo, chavePendentes])
+    setRascunhos(new Map(ler<RascunhoResposta[]>(chaveRascunhos, []).map((r) => [r.questaoId, r])))
+    setReveladasAgora(new Set())
+    // A chave antiga guardava ids de respostas JÁ gravadas esperando revelação.
+    // Aquelas respostas continuam no banco e agora aparecem corrigidas, que é o
+    // certo — o que não pode é o lixo ficar ocupando espaço para sempre.
+    try {
+      localStorage.removeItem(`${CHAVE_ANTIGA}:${userId ?? 'anon'}`)
+    } catch {
+      /* armazenamento bloqueado: não há o que limpar */
+    }
+  }, [chaveModo, chaveRascunhos, userId])
 
-  const salvarPendentes = useCallback(
-    (novo: Set<string>) => {
-      setPendentes(novo)
-      gravar(chavePendentes, [...novo])
+  const salvar = useCallback(
+    (novo: Map<string, RascunhoResposta>) => {
+      setRascunhos(novo)
+      gravar(chaveRascunhos, [...novo.values()])
     },
-    [chavePendentes],
+    [chaveRascunhos],
   )
 
   const setAdiada = useCallback(
     (valor: boolean) => {
       setAdiadaInterno(valor)
       gravar(chaveModo, valor)
-      // Desligar o modo revela o que estava pendente: seria estranho pedir
-      // correção na hora e continuar com dez respostas escondidas.
-      if (!valor) {
-        setReveladasAgora((atual) => new Set([...atual, ...pendentes]))
-        salvarPendentes(new Set())
-      }
     },
-    [chaveModo, pendentes, salvarPendentes],
+    [chaveModo],
   )
 
-  /** Chamado quando a pessoa responde com o modo adiado ligado. */
-  const marcarPendente = useCallback(
-    (questaoId: string) => {
+  /**
+   * Marca — ou TROCA — a alternativa escolhida, sem gravar.
+   *
+   * Trocar é a operação normal aqui, não a exceção: é para isso que o rascunho
+   * existe. Marcar de novo na mesma questão simplesmente substitui.
+   */
+  const marcarRascunho = useCallback(
+    (rascunho: RascunhoResposta) => {
       setReveladasAgora((atual) => {
-        if (!atual.has(questaoId)) return atual
+        if (!atual.has(rascunho.questaoId)) return atual
         const novo = new Set(atual)
-        novo.delete(questaoId)
+        novo.delete(rascunho.questaoId)
         return novo
       })
-      salvarPendentes(new Set(pendentes).add(questaoId))
+      salvar(new Map(rascunhos).set(rascunho.questaoId, rascunho))
     },
-    [pendentes, salvarPendentes],
+    [rascunhos, salvar],
   )
 
-  const revelarTodas = useCallback(() => {
-    setReveladasAgora((atual) => new Set([...atual, ...pendentes]))
-    salvarPendentes(new Set())
-  }, [pendentes, salvarPendentes])
+  /** Depois de gravar de verdade: o rascunho cumpriu o papel e some. */
+  const limparRascunhos = useCallback(() => salvar(new Map()), [salvar])
 
-  const revelar = useCallback(
-    (questaoId: string) => {
-      setReveladasAgora((atual) => new Set(atual).add(questaoId))
-      const novo = new Set(pendentes)
-      novo.delete(questaoId)
-      salvarPendentes(novo)
-    },
-    [pendentes, salvarPendentes],
+  /** Marca como "acabou de ser corrigida" para a questão não sumir da lista. */
+  const marcarReveladas = useCallback(
+    (questaoIds: string[]) => setReveladasAgora((atual) => new Set([...atual, ...questaoIds])),
+    [],
   )
 
   /** Chamado quando a pessoa sai da lista de pendentes — o rastro cumpriu o papel. */
@@ -120,11 +148,11 @@ export function useCorrecaoAdiada(userId: string | undefined) {
   return {
     adiada,
     setAdiada,
-    pendentes,
+    rascunhos,
+    marcarRascunho,
+    limparRascunhos,
     reveladasAgora,
-    marcarPendente,
-    revelar,
-    revelarTodas,
+    marcarReveladas,
     limparReveladas,
   }
 }

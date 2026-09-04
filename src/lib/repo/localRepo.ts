@@ -1,7 +1,7 @@
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
 import type { Aula, AulaImportPayload, Bloco, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
-import type { AulaBasica, AulaComQuestoes, BackupData, DataRepository, MateriaComContagem } from './types'
+import type { AulaBasica, AulaComQuestoes, BackupData, DataRepository, MateriaComContagem, RespostaParaGravar } from './types'
 
 const STORAGE_KEY = 'mpe:v1'
 
@@ -254,12 +254,22 @@ export class LocalRepository implements DataRepository {
     return s.respostas.filter((r) => r.userId === userId)
   }
 
-  async registrarResposta(resposta: Omit<Resposta, 'id' | 'respondidoEm'>): Promise<Resposta> {
+  async registrarResposta(resposta: RespostaParaGravar): Promise<Resposta> {
+    const [gravada] = await this.registrarRespostas([resposta])
+    return gravada
+  }
+
+  async registrarRespostas(respostas: RespostaParaGravar[]): Promise<Resposta[]> {
+    if (respostas.length === 0) return []
     const s = load()
-    const nova: Resposta = { ...resposta, id: id(), respondidoEm: new Date().toISOString() }
-    s.respostas.push(nova)
+    const novas: Resposta[] = respostas.map((r) => ({
+      ...r,
+      id: id(),
+      respondidoEm: r.respondidoEm ?? new Date().toISOString(),
+    }))
+    s.respostas.push(...novas)
     save(s)
-    return nova
+    return novas
   }
 
   async esquecerRespostas(

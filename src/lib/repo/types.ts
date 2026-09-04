@@ -71,6 +71,16 @@ export interface QuestaoFiltro {
  * repositório Supabase (usado quando VITE_SUPABASE_URL/ANON_KEY existem).
  * Trocar de implementação não deve exigir mudanças nas telas.
  */
+/**
+ * Uma resposta a caminho do banco.
+ *
+ * `respondidoEm` normalmente não vem — o banco carimba a hora sozinho. Quem
+ * passa é a correção adiada: uma questão marcada ontem à noite e corrigida
+ * hoje de manhã tem que contar como respondida ONTEM, senão o extrato e o
+ * caderno do mês mudam de dia sozinhos.
+ */
+export type RespostaParaGravar = Omit<Resposta, 'id' | 'respondidoEm'> & { respondidoEm?: string }
+
 export interface DataRepository {
   listMaterias(userId: string): Promise<MateriaComContagem[]>
   listBiblioteca(): Promise<MateriaComContagem[]>
@@ -121,7 +131,15 @@ export interface DataRepository {
   excluirQuestao(questaoId: string): Promise<void>
 
   listRespostas(userId: string): Promise<Resposta[]>
-  registrarResposta(resposta: Omit<Resposta, 'id' | 'respondidoEm'>): Promise<Resposta>
+  registrarResposta(resposta: RespostaParaGravar): Promise<Resposta>
+  /**
+   * Grava várias respostas de uma vez.
+   *
+   * Existe por causa da correção adiada: quem faz uma bateria de cinquenta
+   * questões e só então manda corrigir gravaria cinquenta vezes seguidas, uma
+   * ida ao banco por questão. Aqui é uma ida só.
+   */
+  registrarRespostas(respostas: RespostaParaGravar[]): Promise<Resposta[]>
   /**
    * Apaga as respostas do usuário dentro de um escopo, para que as questões
    * voltem a ficar em branco e possam ser refeitas.
