@@ -43,6 +43,18 @@ export function useCorrecaoAdiada(userId: string | undefined) {
 
   const [adiada, setAdiadaInterno] = useState(false)
   const [pendentes, setPendentes] = useState<Set<string>>(new Set())
+  /**
+   * O que saiu da fila AGORA, nesta visita à tela.
+   *
+   * Sem isto, mandar corrigir esvaziava a fila e a lista "só as que faltam
+   * corrigir" ficava vazia no mesmo instante — a pessoa pedia a correção e as
+   * questões sumiam antes de ela conseguir ler um comentário sequer. Pedir
+   * correção tem que ENTREGAR a correção, não fechar a lista.
+   *
+   * Fica só na memória, de propósito: é o rastro de uma sessão de estudo, não
+   * um dado da conta. Recarregar a página começa do zero, que é o esperado.
+   */
+  const [reveladasAgora, setReveladasAgora] = useState<Set<string>>(new Set())
 
   // Carrega quando o usuário fica conhecido. Sem isso a preferência de uma
   // conta apareceria na sessão da outra no mesmo navegador.
@@ -65,23 +77,36 @@ export function useCorrecaoAdiada(userId: string | undefined) {
       gravar(chaveModo, valor)
       // Desligar o modo revela o que estava pendente: seria estranho pedir
       // correção na hora e continuar com dez respostas escondidas.
-      if (!valor) salvarPendentes(new Set())
+      if (!valor) {
+        setReveladasAgora((atual) => new Set([...atual, ...pendentes]))
+        salvarPendentes(new Set())
+      }
     },
-    [chaveModo, salvarPendentes],
+    [chaveModo, pendentes, salvarPendentes],
   )
 
   /** Chamado quando a pessoa responde com o modo adiado ligado. */
   const marcarPendente = useCallback(
     (questaoId: string) => {
+      setReveladasAgora((atual) => {
+        if (!atual.has(questaoId)) return atual
+        const novo = new Set(atual)
+        novo.delete(questaoId)
+        return novo
+      })
       salvarPendentes(new Set(pendentes).add(questaoId))
     },
     [pendentes, salvarPendentes],
   )
 
-  const revelarTodas = useCallback(() => salvarPendentes(new Set()), [salvarPendentes])
+  const revelarTodas = useCallback(() => {
+    setReveladasAgora((atual) => new Set([...atual, ...pendentes]))
+    salvarPendentes(new Set())
+  }, [pendentes, salvarPendentes])
 
   const revelar = useCallback(
     (questaoId: string) => {
+      setReveladasAgora((atual) => new Set(atual).add(questaoId))
       const novo = new Set(pendentes)
       novo.delete(questaoId)
       salvarPendentes(novo)
@@ -89,5 +114,17 @@ export function useCorrecaoAdiada(userId: string | undefined) {
     [pendentes, salvarPendentes],
   )
 
-  return { adiada, setAdiada, pendentes, marcarPendente, revelar, revelarTodas }
+  /** Chamado quando a pessoa sai da lista de pendentes — o rastro cumpriu o papel. */
+  const limparReveladas = useCallback(() => setReveladasAgora(new Set()), [])
+
+  return {
+    adiada,
+    setAdiada,
+    pendentes,
+    reveladasAgora,
+    marcarPendente,
+    revelar,
+    revelarTodas,
+    limparReveladas,
+  }
 }

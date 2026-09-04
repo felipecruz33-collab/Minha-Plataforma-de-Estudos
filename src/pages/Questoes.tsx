@@ -1,4 +1,4 @@
-import { BookOpenCheck, CheckSquare, Eraser, Eye, Search, X } from 'lucide-react'
+import { ArrowLeft, BookOpenCheck, CheckSquare, Eraser, Eye, Search, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { QuestionCard } from '../components/QuestionCard'
 import { Button } from '../components/ui/Button'
@@ -159,7 +159,10 @@ export default function Questoes() {
         const feita = respostaPorQuestao.has(q.id)
         if (situacao === 'feitas' && !feita) return false
         if (situacao === 'nao-feitas' && feita) return false
-        if (situacao === 'pendentes' && !correcao.pendentes.has(q.id)) return false
+        // Também o que acabou de ser corrigido: mandar corrigir tem que
+        // ENTREGAR a correção, e não fechar a lista na cara de quem pediu.
+        if (situacao === 'pendentes' && !correcao.pendentes.has(q.id) && !correcao.reveladasAgora.has(q.id))
+          return false
       }
       if (banca && q.banca !== banca) return false
       if (ano && q.ano !== ano) return false
@@ -180,7 +183,7 @@ export default function Questoes() {
       }
       return true
     })
-  }, [questoes, respostaPorQuestao, busca, materiaId, aulaId, situacao, banca, ano, assunto, correcao.pendentes])
+  }, [questoes, respostaPorQuestao, busca, materiaId, aulaId, situacao, banca, ano, assunto, correcao.pendentes, correcao.reveladasAgora])
 
   const { visiveis, total, temMais, verMais } = useListaVisivel(filtradas)
 
@@ -211,6 +214,19 @@ export default function Questoes() {
     : materiaId
       ? dados?.materias.find((m) => m.id === materiaId)?.rotulo
       : null
+
+  /**
+   * Volta para a lista inteira sem recarregar a página.
+   *
+   * Existe porque "só as que faltam corrigir" é uma lista que se esvazia
+   * sozinha: quando a última é corrigida não sobra nada para o filtro, e a
+   * opção que levou até ali desapareceria do select junto — a única saída
+   * seria dar F5.
+   */
+  function voltarParaTodas() {
+    setSituacao('')
+    correcao.limparReveladas()
+  }
 
   function alternarSelecao(questaoId: string) {
     setSelecionadas((atual) => {
@@ -343,11 +359,28 @@ export default function Questoes() {
           ))}
         </select>
 
-        <select value={situacao} onChange={(e) => setSituacao(e.target.value as Situacao)} className={selectCls}>
+        <select
+          value={situacao}
+          onChange={(e) => {
+            const nova = e.target.value as Situacao
+            // Saiu da lista de pendentes por conta própria: o rastro do que foi
+            // corrigido agora já cumpriu o papel e não precisa envelhecer aqui.
+            if (situacao === 'pendentes' && nova !== 'pendentes') correcao.limparReveladas()
+            setSituacao(nova)
+          }}
+          className={selectCls}
+        >
           <option value="">Feitas e não feitas</option>
           <option value="nao-feitas">Só as não feitas</option>
           <option value="feitas">Só as já feitas</option>
-          {correcao.pendentes.size > 0 && <option value="pendentes">Só as que faltam corrigir</option>}
+          {/* Continua na lista enquanto ela estiver aberta, mesmo com a fila já
+              zerada: sumir com a opção selecionada deixaria o select mostrando
+              um filtro que não existe mais. */}
+          {(correcao.pendentes.size > 0 || situacao === 'pendentes') && (
+            <option value="pendentes">
+              {correcao.pendentes.size > 0 ? 'Só as que faltam corrigir' : 'Só as que acabei de corrigir'}
+            </option>
+          )}
         </select>
 
         <select value={banca} onChange={(e) => setBanca(e.target.value)} className={selectCls}>
@@ -394,23 +427,39 @@ export default function Questoes() {
           </span>
         </label>
 
-        {correcao.pendentes.size > 0 && (
+        {(correcao.pendentes.size > 0 || (situacao === 'pendentes' && correcao.reveladasAgora.size > 0)) && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3">
-            <p className="text-xs text-slate-600">
-              <strong className="text-navy">{correcao.pendentes.size}</strong>{' '}
-              {correcao.pendentes.size === 1 ? 'questão respondida esperando' : 'questões respondidas esperando'}{' '}
-              correção.
-            </p>
+            {correcao.pendentes.size > 0 ? (
+              <p className="text-xs text-slate-600">
+                <strong className="text-navy">{correcao.pendentes.size}</strong>{' '}
+                {correcao.pendentes.size === 1 ? 'questão respondida esperando' : 'questões respondidas esperando'}{' '}
+                correção.
+              </p>
+            ) : (
+              <p className="text-xs text-slate-600">
+                <strong className="text-emerald-700">Corrigidas.</strong> As{' '}
+                <strong className="text-navy">{correcao.reveladasAgora.size}</strong>{' '}
+                {correcao.reveladasAgora.size === 1 ? 'questão continua' : 'questões continuam'} aqui com o gabarito e os
+                comentários — leia com calma e volte quando quiser.
+              </p>
+            )}
             <div className="flex gap-2">
-              {situacao !== 'pendentes' && (
+              {situacao === 'pendentes' ? (
+                <Button variant="secondary" onClick={voltarParaTodas} className="px-3 py-1.5 text-xs">
+                  <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} />
+                  Voltar para todas
+                </Button>
+              ) : (
                 <Button variant="secondary" onClick={() => setSituacao('pendentes')} className="px-3 py-1.5 text-xs">
                   Ver só elas
                 </Button>
               )}
-              <Button onClick={correcao.revelarTodas} className="px-3 py-1.5 text-xs">
-                <Eye className="h-3.5 w-3.5" strokeWidth={2} />
-                Corrigir agora
-              </Button>
+              {correcao.pendentes.size > 0 && (
+                <Button onClick={correcao.revelarTodas} className="px-3 py-1.5 text-xs">
+                  <Eye className="h-3.5 w-3.5" strokeWidth={2} />
+                  Corrigir agora
+                </Button>
+              )}
             </div>
           </div>
         )}
@@ -490,9 +539,24 @@ export default function Questoes() {
       ) : filtradas.length === 0 ? (
         <EmptyState
           icon={BookOpenCheck}
-          title="Nenhuma questão encontrada"
-          description={situacao === 'nao-feitas' ? 'Você já respondeu todas as questões desta seleção.' : undefined}
-        />
+          title={situacao === 'pendentes' ? 'Nada esperando correção' : 'Nenhuma questão encontrada'}
+          description={
+            situacao === 'pendentes'
+              ? 'Todas as respostas desta seleção já foram corrigidas.'
+              : situacao === 'nao-feitas'
+                ? 'Você já respondeu todas as questões desta seleção.'
+                : undefined
+          }
+        >
+          {/* A saída fica dentro do próprio vazio: é justamente aqui que a
+              pessoa fica sem nada para clicar. */}
+          {situacao === 'pendentes' && (
+            <Button variant="secondary" onClick={voltarParaTodas} className="px-3 py-1.5 text-xs">
+              <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} />
+              Voltar para todas as questões
+            </Button>
+          )}
+        </EmptyState>
       ) : (
         <div className="space-y-3">
           {visiveis.map((q) => {

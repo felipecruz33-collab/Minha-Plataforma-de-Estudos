@@ -67,9 +67,18 @@ export function QuestionCard({
 
   async function responder(altId: string) {
     if (respondida || !user) return
+    const correta = altId === questao.gabarito
     setEscolha(altId)
     setRespondida(true)
-    const correta = altId === questao.gabarito
+    // Avisar o pai ANTES de gravar, e não depois, não é detalhe de estilo: é o
+    // que faz a correção adiada funcionar. É este aviso que põe a questão na
+    // fila de pendentes, e é de lá que sai o `revelada`. Com ele depois do
+    // `await`, entre o clique e a volta do banco existia um render com
+    // `respondida` já true e `revelada` ainda true: o verde/vermelho piscava na
+    // tela antes de sumir — e meio segundo de verde já entrega o gabarito, que
+    // é exatamente o que a pessoa pediu para não ver. Assim as duas mudanças de
+    // estado caem no mesmo render e nada chega a aparecer.
+    onRespondida?.(correta)
     await repo.registrarResposta({
       userId: user.id,
       questaoId: questao.id,
@@ -78,7 +87,6 @@ export function QuestionCard({
       alternativaEscolhida: altId,
       correta,
     })
-    onRespondida?.(correta)
   }
 
   const metaInfo = [questao.banca, questao.orgao, questao.ano].filter(Boolean).join(' · ')
