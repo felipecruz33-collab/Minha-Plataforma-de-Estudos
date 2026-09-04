@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist'
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import type { AulaImportPayload } from '../types'
+import { dividirTextoEmPartes } from './dividirTexto'
 import { mesclarAulasDoMesmoPdf } from './mesclarAulas'
 import { isSupabaseConfigured, supabase } from '../supabaseClient'
 
@@ -400,50 +401,6 @@ async function interpretarResposta(resposta: Response, texto: string, numPaginas
   return dados.payload
 }
 
-// Acha, dentro de uma janela ao redor do alvo, a quebra de parágrafo mais
-// próxima dele — pra não cortar uma questão ou um parágrafo ao meio. Sem
-// nenhuma quebra na janela, corta exatamente no alvo mesmo assim.
-function corteMaisProximo(texto: string, alvo: number, janela: number): number {
-  const inicio = Math.max(0, alvo - janela)
-  const fim = Math.min(texto.length, alvo + janela)
-  const trecho = texto.slice(inicio, fim)
-
-  let melhorCorte = -1
-  let melhorDistancia = Infinity
-  let pos = trecho.indexOf('\n\n')
-  while (pos !== -1) {
-    const corteAbsoluto = inicio + pos + 2
-    const distancia = Math.abs(corteAbsoluto - alvo)
-    if (distancia < melhorDistancia) {
-      melhorDistancia = distancia
-      melhorCorte = corteAbsoluto
-    }
-    pos = trecho.indexOf('\n\n', pos + 2)
-  }
-  return melhorCorte !== -1 ? melhorCorte : alvo
-}
-
-// Divide o texto em N partes de tamanho parecido, cada corte preferindo uma
-// quebra de parágrafo perto do ponto ideal (i/numPartes do texto todo).
-function dividirTextoEmPartes(texto: string, numPartes: number): string[] {
-  if (numPartes <= 1) return [texto.trim()]
-
-  const janela = Math.floor((texto.length / numPartes) * 0.2)
-  const cortes = Array.from({ length: numPartes - 1 }, (_, i) => {
-    const alvo = Math.floor((texto.length * (i + 1)) / numPartes)
-    return corteMaisProximo(texto, alvo, janela)
-  })
-  const cortesUnicos = Array.from(new Set(cortes)).sort((a, b) => a - b)
-
-  const partes: string[] = []
-  let anterior = 0
-  for (const corte of cortesUnicos) {
-    partes.push(texto.slice(anterior, corte).trim())
-    anterior = corte
-  }
-  partes.push(texto.slice(anterior).trim())
-  return partes.filter((p) => p.length > 0)
-}
 
 /**
  * "PDF com IA" (Seção 6.3) — recebe o texto já extraído do PDF (ver
