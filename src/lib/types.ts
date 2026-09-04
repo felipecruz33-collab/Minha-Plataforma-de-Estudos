@@ -181,6 +181,20 @@ export interface Perfil {
   /** Chave própria e opcional da API do Gemini (gratuita) — usada no lugar da chave
    *  compartilhada da plataforma no "PDF com IA", pra não competir por cota com outros usuários. */
   chaveGemini: string | null
+  /**
+   * Estado do ciclo de revisão. É a única coisa que o ciclo guarda — o resto
+   * ele calcula do histórico de respostas.
+   */
+  revisao: EstadoDoCicloRevisao
+}
+
+export interface EstadoDoCicloRevisao {
+  /** Quando a pausa começou. `null` = rodando. */
+  pausadaEm: string | null
+  /** Quando voltou da última pausa. Prazos antigos recontam a partir daqui. */
+  retomadaEm: string | null
+  /** Marco de recomeço: respostas anteriores a isto ficam fora do ciclo. */
+  reinicio: string | null
 }
 
 /** Estrutura exata de importação/geração (Seção 6). */

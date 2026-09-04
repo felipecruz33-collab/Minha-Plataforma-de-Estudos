@@ -117,6 +117,9 @@ export class CachedRepository implements DataRepository {
     // memória. É chamada uma vez ao abrir a tela de importar, e é barata.
     return this.base.pdfsNoPeriodo(userId, desdeISO)
   }
+  salvarCicloRevisao(...args: Parameters<DataRepository['salvarCicloRevisao']>) {
+    return this.escrever(() => this.base.salvarCicloRevisao(...args))
+  }
   usoNoPeriodo(userId: string, desdeISO: string) {
     // Sem cache pelo mesmo motivo de `pdfsNoPeriodo`: `desdeISO` é "agora
     // menos 30 dias", texto novo a cada milissegundo. Guardar isso seria

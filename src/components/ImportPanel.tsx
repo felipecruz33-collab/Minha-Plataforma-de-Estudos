@@ -225,7 +225,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
       setErrors([
         `Você já converteu ${cotaPremium?.usadas} páginas com IA nos últimos ${JANELA_PREMIUM_DIAS} dias — o limite do Premium é de ${LIMITE_PAGINAS_PREMIUM_MES}.` +
           (quandoRenovaPremium ? ` A cota volta a abrir em ${quandoRenovaPremium}.` : '') +
-          ' A importação de arquivos .json continua livre na outra aba.',
+          (podeImportarJson ? ' A importação de arquivos .json continua livre na outra aba.' : ''),
       ])
       return
     }
@@ -361,14 +361,34 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
     }
   }
 
+  /**
+   * A aba de .json é só do administrador.
+   *
+   * Ela é a porta dos fundos do limite de PDFs: quem monta o .json por fora,
+   * numa IA qualquer, importa conteúdo ilimitado sem passar por nenhuma cota —
+   * e o limite existe justamente porque a IA custa dinheiro de verdade.
+   *
+   * Isto é a TELA, não a tranca: a RLS permite que qualquer pessoa crie as
+   * próprias aulas, e tem que permitir, senão a importação por PDF também
+   * pararia (ela grava pelo mesmo caminho). Esconder a aba resolve o caso real
+   * — alguém pedindo um .json pronto para uma IA —, não alguém escrevendo
+   * chamadas ao banco na mão.
+   */
+  const podeImportarJson = !!perfil?.isAdmin
+  const abaAtiva = podeImportarJson ? aba : 'pdf'
+
   return (
     <div className="rounded-xl border border-slate-200">
       <Tabs
-        tabs={[
-          { key: 'pdf', label: 'PDF com IA' },
-          { key: 'json', label: 'Arquivo .json' },
-        ]}
-        active={aba}
+        tabs={
+          podeImportarJson
+            ? [
+                { key: 'pdf', label: 'PDF com IA' },
+                { key: 'json', label: 'Arquivo .json' },
+              ]
+            : [{ key: 'pdf', label: 'PDF com IA' }]
+        }
+        active={abaAtiva}
         onChange={(k) => {
           setAba(k as 'pdf' | 'json')
           setErrors([])
@@ -379,12 +399,12 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
       <div className="space-y-4 p-4">
         <MateriaPicker
           isBiblioteca={isBiblioteca}
-          autoLabel={aba === 'pdf' ? 'Deixar a IA identificar automaticamente' : 'Usar a matéria do próprio arquivo .json'}
+          autoLabel={abaAtiva === 'pdf' ? 'Deixar a IA identificar automaticamente' : 'Usar a matéria do próprio arquivo .json'}
           value={escolhaMateria}
           onChange={setEscolhaMateria}
         />
 
-        {aba === 'pdf' ? (
+        {abaAtiva === 'pdf' ? (
           <div>
             <p className="mb-2 flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
               <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.75} />
@@ -399,9 +419,9 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
               <FileJson className="h-4 w-4 shrink-0" strokeWidth={1.75} />
               <span>
                 Quer material mais aprofundado — teoria expandida e comentário em <span className="font-semibold">cada</span>{' '}
-                alternativa? Monte o conteúdo como arquivo <span className="font-semibold">.json</span> e use a outra aba. O formato
-                aceita tudo isso; aqui no PDF a IA é mantida enxuta de propósito, pra conseguir entregar sem estourar o tempo do
-                servidor.
+                alternativa? Esse material precisa ser montado como arquivo <span className="font-semibold">.json</span>,
+                que hoje só o administrador importa. Aqui no PDF a IA é mantida enxuta de propósito, pra conseguir entregar
+                sem estourar o tempo do servidor.
               </span>
             </p>
             {!perfil?.chaveGemini && (
@@ -442,8 +462,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                       <Link to="/premium" className="font-semibold underline">
                         Assine o Premium
                       </Link>{' '}
-                      para converter sem limite — a importação de arquivos <strong>.json</strong> continua livre na outra
-                      aba.
+                      para converter sem limite.
                     </>
                   ) : (
                     <>
@@ -452,7 +471,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                       <Link to="/premium" className="font-semibold underline">
                         O Premium é sem limite
                       </Link>
-                      ; a importação de <strong>.json</strong> já é livre pra todo mundo.
+.
                     </>
                   )}
                 </span>
@@ -489,7 +508,7 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
                           A cota volta a abrir em <strong>{quandoRenovaPremium}</strong>.
                         </>
                       )}{' '}
-                      A importação de <strong>.json</strong> continua livre na outra aba.
+
                     </>
                   ) : (
                     <>

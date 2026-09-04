@@ -1,6 +1,7 @@
 import { AlertTriangle, BookOpen, ChevronDown, ChevronRight, ExternalLink, PartyPopper } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { ControleDaRevisao } from '../components/ControleDaRevisao'
 import { QuestionCard } from '../components/QuestionCard'
 import { Card } from '../components/ui/Card'
 import { CarregarMais } from '../components/ui/CarregarMais'
@@ -67,7 +68,7 @@ function TeoriaDaAula({ aulaId }: { aulaId: string }) {
 }
 
 export default function Revisao() {
-  const { user } = useAuth()
+  const { user, perfil } = useAuth()
   const { questaoPorId, aulaPorId, materiaNomePorId, loading } = useTodasQuestoes()
   const [respostas, setRespostas] = useState<Resposta[] | null>(null)
   const [aberto, setAberto] = useState<string | null>(null)
@@ -77,7 +78,7 @@ export default function Revisao() {
     repo.listRespostas(user.id).then(setRespostas)
   }, [user])
 
-  const estados = useMemo(() => estadosDeRevisao(respostas ?? []), [respostas])
+  const estados = useMemo(() => estadosDeRevisao(respostas ?? [], new Date(), perfil?.revisao), [respostas, perfil?.revisao])
 
   /**
    * Um caderno por AULA, e não por assunto, porque é na aula que mora a
@@ -136,6 +137,10 @@ export default function Revisao() {
 
   if (cadernos.length === 0) {
     return (
+      <div>
+        {/* O controle fica aqui também: sem ele, quem pausou ou recomeçou
+            cairia nesta tela sem nenhuma forma de voltar atrás. */}
+        <ControleDaRevisao />
       <Card className="flex flex-col items-center gap-3 py-14 text-center">
         <PartyPopper className="h-10 w-10 text-brand-blue" strokeWidth={1.5} />
         <p className="font-semibold text-navy">Nenhum caderno aberto por aqui!</p>
@@ -144,6 +149,7 @@ export default function Revisao() {
           e não só o erro. Continue respondendo questões.
         </p>
       </Card>
+      </div>
     )
   }
 
@@ -152,6 +158,8 @@ export default function Revisao() {
 
   return (
     <div className="space-y-4">
+      <ControleDaRevisao />
+
       <p className="text-sm text-slate-500">
         <span className="font-semibold text-navy">{cadernos.length}</span>{' '}
         {cadernos.length === 1 ? 'caderno aberto' : 'cadernos abertos'} ·{' '}

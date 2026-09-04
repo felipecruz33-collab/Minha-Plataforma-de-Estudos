@@ -1,4 +1,4 @@
-import type { Aula, AulaImportPayload, Cronograma, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
+import type { Aula, AulaImportPayload, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
 
 export interface MateriaComContagem extends Materia {
   numAulas: number
@@ -138,6 +138,13 @@ export interface DataRepository {
   getPerfil(userId: string, email: string): Promise<Perfil>
   atualizarNome(userId: string, nome: string): Promise<Perfil>
   salvarChaveGemini(userId: string, chave: string | null): Promise<Perfil>
+  /**
+   * Grava o estado do ciclo de revisão (pausa e recomeço).
+   *
+   * É o único estado que o ciclo guarda — todo o resto sai do histórico de
+   * respostas. Requer a migração 0017.
+   */
+  salvarCicloRevisao(userId: string, ciclo: EstadoDoCicloRevisao): Promise<Perfil>
   /** Concede ou remove Premium. Só o administrador consegue (checado no banco, não só na tela). */
   setPremium(userId: string, value: boolean): Promise<void>
   /** Exclui a conta e TODO o conteúdo dela. Só o administrador, e nunca a própria conta. */

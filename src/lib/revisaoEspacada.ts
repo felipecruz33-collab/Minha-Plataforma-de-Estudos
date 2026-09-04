@@ -1,4 +1,4 @@
-import type { Resposta } from './types'
+import type { EstadoDoCicloRevisao, Resposta } from './types'
 
 /**
  * Repetição espaçada a partir do histórico que já existe.
@@ -65,6 +65,8 @@ export interface EstadoRevisao {
   diasAteVoltar: number
   /** Já passou da hora de rever. */
   vencida: boolean
+  /** O ciclo inteiro está pausado — o prazo desta questão está congelado. */
+  pausada: boolean
   /** Chegou ao último degrau da escada. */
   dominada: boolean
 }
@@ -76,9 +78,18 @@ export interface EstadoRevisao {
  * recuperar o que falhou, não pra reapresentar o que já está resolvido — isso
  * só encheria a lista e faria a pessoa parar de olhar pra ela.
  */
-export function estadosDeRevisao(respostas: Resposta[], hoje = new Date()): Map<string, EstadoRevisao> {
+export function estadosDeRevisao(
+  respostas: Resposta[],
+  hoje = new Date(),
+  ciclo?: EstadoDoCicloRevisao | null,
+): Map<string, EstadoRevisao> {
   const porQuestao = new Map<string, Resposta[]>()
   for (const r of respostas) {
+    // RECOMEÇO: o que foi respondido antes do marco não entra mais no ciclo.
+    // A resposta continua no banco e continua contando no Desempenho — ela só
+    // deixa de gerar dívida de revisão, que é o pedido de quem troca de
+    // concurso e não quer arrastar o material antigo.
+    if (ciclo?.reinicio && r.respondidoEm < ciclo.reinicio) continue
     const lista = porQuestao.get(r.questaoId)
     if (lista) lista.push(r)
     else porQuestao.set(r.questaoId, [r])
@@ -104,7 +115,14 @@ export function estadosDeRevisao(respostas: Resposta[], hoje = new Date()): Map<
     const ultima = emOrdem[emOrdem.length - 1]
     const degrau = Math.min(acertosSeguidos, ESCADA_DIAS.length - 1)
     const intervaloDias = ESCADA_DIAS[degrau]
-    const ultimaEm = diaDe(ultima.respondidoEm)
+    // PAUSA: quem parou não volta para um muro de atraso. Uma resposta anterior
+    // à retomada conta como se tivesse sido dada NO DIA da volta — o prazo
+    // recomeça dali, e o degrau da escada que a pessoa já tinha conquistado é
+    // preservado. Resposta dada DEPOIS da volta usa a data real dela, senão o
+    // que ela responde hoje nasceria com prazo deslocado.
+    const referencia =
+      ciclo?.retomadaEm && ultima.respondidoEm < ciclo.retomadaEm ? ciclo.retomadaEm : ultima.respondidoEm
+    const ultimaEm = diaDe(referencia)
     const voltaEm = somarDias(ultimaEm, intervaloDias)
     const diasAteVoltar = diferencaEmDias(diaHoje, voltaEm)
 
@@ -117,7 +135,10 @@ export function estadosDeRevisao(respostas: Resposta[], hoje = new Date()): Map<
       intervaloDias,
       voltaEm,
       diasAteVoltar,
-      vencida: diasAteVoltar <= 0,
+      // Pausado: o relógio para. Nada vence, e a tela fica calma — que é o
+      // motivo de existir o botão.
+      vencida: !ciclo?.pausadaEm && diasAteVoltar <= 0,
+      pausada: !!ciclo?.pausadaEm,
       dominada: acertosSeguidos >= ACERTOS_PARA_DOMINAR,
     })
   }
@@ -134,6 +155,10 @@ export function vencidasPrimeiro(estados: Map<string, EstadoRevisao>): EstadoRev
 
 /** "hoje", "amanhã", "em 5 dias", "atrasada há 3 dias" — texto pronto pra tela. */
 export function textoDoPrazo(e: EstadoRevisao): string {
+  // Pausado, o prazo está congelado. Dizer "atrasada há 39 dias" aqui
+  // contradiria o aviso logo acima na mesma tela ("nada vence enquanto isso") —
+  // e é a contradição que faz a pessoa desconfiar do resto.
+  if (e.pausada) return 'em pausa'
   if (e.diasAteVoltar < 0) {
     const dias = Math.abs(e.diasAteVoltar)
     return `atrasada há ${dias} ${dias === 1 ? 'dia' : 'dias'}`
