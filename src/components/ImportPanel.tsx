@@ -586,7 +586,20 @@ export function ImportPanel({ isBiblioteca, onImported }: ImportPanelProps) {
           </label>
         )}
 
-        {busy && <p className="text-sm text-slate-400">{etapa ?? 'Processando…'}</p>}
+        {busy && (
+          <div className="space-y-1">
+            <p className="text-sm text-slate-400">{etapa ?? 'Processando…'}</p>
+            {/* Agora a importação PAUSA em segundo plano em vez de derrubar as
+                chamadas em voo, e isso muda o que a pessoa deve esperar: sair
+                do app não estraga nada, mas também não adianta o trabalho. Sem
+                dizer isso, quem volta e vê o mesmo número de etapas acha que
+                travou. */}
+            <p className="text-xs text-slate-400">
+              Pode deixar aberto. Se você sair do aplicativo, a importação pausa e continua sozinha quando você voltar —
+              nada se perde.
+            </p>
+          </div>
+        )}
 
         {sucesso && (
           <p className="flex items-start gap-2 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">

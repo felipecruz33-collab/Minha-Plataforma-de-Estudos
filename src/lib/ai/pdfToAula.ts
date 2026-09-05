@@ -336,7 +336,20 @@ async function gerarAulasDoTexto(
   // Então tentamos de novo algumas vezes antes de desistir: quase sempre a
   // segunda tentativa passa, e o usuário nem percebe.
   let ultimoErro: unknown
-  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+  let tentativa = 0
+  let interrupcoes = 0
+  while (tentativa < 3) {
+    // Nada parte com o app minimizado: seria uma chamada nascida para cair.
+    await esperarPaginaVisivel()
+
+    // Se a tela apagar DURANTE a chamada, a queda que vier depois é a
+    // consequência disso — e não um problema de rede que valha repetir.
+    let escondeuNoMeio = false
+    const marcar = () => {
+      if (estaEscondido()) escondeuNoMeio = true
+    }
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', marcar)
+
     try {
       // A sessão vai junto: a função serverless recusa quem não estiver
       // logado, e é ela quem confere o limite de PDFs — a tela só antecipa o
@@ -356,8 +369,32 @@ async function gerarAulasDoTexto(
       // repetir a chamada não mudaria nada, então sobe na hora.
       if (e instanceof PdfMuitoGrandeError || e instanceof RespostaDaIAError) throw e
       ultimoErro = e
-      if (tentativa < 3) await new Promise((r) => setTimeout(r, tentativa * 2000))
+
+      // PAUSA, não falha: o app foi para segundo plano. Espera a pessoa
+      // voltar e refaz a chamada sem gastar uma das três tentativas — senão
+      // uma ida ao WhatsApp consumiria a importação inteira.
+      if (escondeuNoMeio || estaEscondido()) {
+        if (++interrupcoes > MAX_INTERRUPCOES) break
+        await esperarPaginaVisivel()
+        await esperar(ESPERA_AO_VOLTAR_MS + Math.random() * ESPERA_AO_VOLTAR_MS)
+        continue
+      }
+
+      tentativa += 1
+      if (tentativa < 3) await esperar(tentativa * 2000)
+    } finally {
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', marcar)
     }
+  }
+
+  // Duas saídas diferentes chegam aqui, e dizer a errada manda a pessoa
+  // procurar problema no lugar errado — foi assim que "o app ficou minimizado"
+  // virou "sua internet está instável".
+  if (interrupcoes > MAX_INTERRUPCOES) {
+    console.error('gerar aula: interrompida pelo segundo plano vezes demais:', ultimoErro)
+    throw new Error(
+      'A importação foi interrompida várias vezes porque o aplicativo ficou em segundo plano. Tente de novo deixando esta tela aberta até terminar.',
+    )
   }
 
   console.error('gerar aula: conexão falhou nas 3 tentativas:', ultimoErro)
@@ -368,6 +405,70 @@ async function gerarAulasDoTexto(
 
 /** Erro vindo da resposta do servidor (não é falha de conexão, então não adianta repetir a chamada). */
 class RespostaDaIAError extends Error {}
+
+/**
+ * Minimizar o aplicativo no meio da importação.
+ *
+ * O celular tem todo o direito de congelar um app em segundo plano, e quando
+ * ele faz isso as requisições em voo caem. O laço de repetição abaixo lia essa
+ * queda como "internet ruim" e refazia a chamada — ainda minimizado, então a
+ * nova chamada caía também, e a seguinte, até esgotar as três tentativas de
+ * cada etapa. Medido: um PDF de 3 partes virava 9 chamadas e a importação
+ * morria com "a conexão caiu".
+ *
+ * O estrago não é só o desperdício. Cada uma dessas chamadas é uma cascata
+ * inteira de IA no servidor, e as chamadas originais continuam rodando lá
+ * depois que o navegador desiste delas. Os provedores gratuitos contam cota
+ * POR MINUTO (a Groq corta em 8.000 tokens), então a rajada tem tudo para
+ * empurrar a corrida até o fim da fila, onde estão os modelos mais fracos —
+ * o caminho mais provável para "minimizei o app" aparecer na tela como "a IA
+ * devolveu dados em formato inesperado". Essa última parte é dedução: o que
+ * está medido aqui é o comportamento do cliente (as 9 chamadas e a
+ * importação perdida), não o que cada provedor respondeu.
+ *
+ * A regra passa a ser simples: com o app em segundo plano, nada novo é
+ * disparado. O que caiu por causa disso não conta como falha — conta como
+ * pausa, e recomeça sozinho quando a pessoa volta.
+ */
+function estaEscondido(): boolean {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden'
+}
+
+/** Resolve assim que a página estiver à vista — na hora, se já estiver. */
+function esperarPaginaVisivel(): Promise<void> {
+  if (!estaEscondido()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const aoVoltar = () => {
+      if (estaEscondido()) return
+      document.removeEventListener('visibilitychange', aoVoltar)
+      resolve()
+    }
+    document.addEventListener('visibilitychange', aoVoltar)
+  })
+}
+
+const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Quantas vezes uma etapa pode ser interrompida por segundo plano antes de
+ * desistir.
+ *
+ * Existe só para a espera não ser infinita se algo prender a página em
+ * 'hidden' para sempre. É generoso de propósito: interrupção não é erro, e
+ * quem minimiza cinco vezes durante uma importação longa não está fazendo
+ * nada de errado.
+ */
+const MAX_INTERRUPCOES = 8
+
+/**
+ * Espera antes de refazer uma chamada interrompida pelo segundo plano.
+ *
+ * A chamada derrubada pode continuar viva no servidor por mais um tempo,
+ * gastando a cota do minuto. Voltar disparando as três etapas no mesmo
+ * instante recria a rajada que este conserto existe para evitar — daí a
+ * espera com um sorteio, que também desencontra as etapas entre si.
+ */
+const ESPERA_AO_VOLTAR_MS = 2000
 
 async function interpretarResposta(resposta: Response, texto: string, numPaginas: number): Promise<AulaImportPayload[]> {
   const contentType = resposta.headers.get('content-type') ?? ''
@@ -464,6 +565,9 @@ export async function gerarAulaViaIADividida(
 
   async function trabalhador() {
     while (proxima < partes.length) {
+      // Com o app minimizado, a etapa seguinte espera. Começar uma agora só
+      // criaria mais uma chamada para cair junto com as outras.
+      await esperarPaginaVisivel()
       const i = proxima++
       resultados[i] = await gerarComSubdivisao(partes[i], paginasPorParte, materiaOverride, nomeArquivo, chaveUsuario)
       onProgresso?.(++concluidas, partes.length)
@@ -584,6 +688,7 @@ export async function gerarAulaComImagens(
 
   async function trabalhador() {
     while (proxima < lotes.length) {
+      await esperarPaginaVisivel()
       const i = proxima++
       const lote = lotes[i]
       const texto = lote.map((p) => p.texto).filter(Boolean).join('\n\n')
