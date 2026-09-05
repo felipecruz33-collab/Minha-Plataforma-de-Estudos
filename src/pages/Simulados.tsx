@@ -1,4 +1,4 @@
-import { BookMarked, Clock, ListChecks, Play, RotateCcw, Search, Sparkles, Target, Trash2 } from 'lucide-react'
+import { BookMarked, Clock, ListChecks, Play, RotateCcw, Search, Sparkles, Star, Target, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { QuestionCard } from '../components/QuestionCard'
 import { Button } from '../components/ui/Button'
@@ -148,6 +148,7 @@ export default function Simulados() {
   const [paraExcluir, setParaExcluir] = useState<Simulado | null>(null)
 
   const [nome, setNome] = useState(nomePadrao())
+  const [quantasFavoritas, setQuantasFavoritas] = useState(20)
   const [quantidades, setQuantidades] = useState<Record<string, number>>({})
   const [usarTempo, setUsarTempo] = useState(false)
   const [tempoMinutos, setTempoMinutos] = useState(30)
@@ -159,6 +160,22 @@ export default function Simulados() {
   const [agora, setAgora] = useState(0)
   const [confirmarEncerrar, setConfirmarEncerrar] = useState(false)
   const [salvo, setSalvo] = useState(false)
+
+  /**
+   * As questões favoritadas que AINDA existem no acervo da pessoa.
+   *
+   * A lista de favoritos guarda ids, e id sobrevive à questão: material
+   * apagado, aula reimportada, assinatura da biblioteca que terminou. Cruzar
+   * com o acervo carregado é o que evita montar um simulado com buracos.
+   */
+  const favoritas = useMemo(() => {
+    const marcadas = new Set(perfil?.favoritos ?? [])
+    if (marcadas.size === 0) return []
+    return aulas.flatMap((a) => a.questoes).filter((q) => marcadas.has(q.id))
+  }, [aulas, perfil?.favoritos])
+
+  /** Nunca pedir mais do que existe — nem menos de uma. */
+  const limiteFavoritas = Math.max(1, Math.min(quantasFavoritas, favoritas.length))
 
   const caderno = useMemo(() => {
     const questoes = aulas.flatMap((a) => a.questoes)
@@ -181,6 +198,31 @@ export default function Simulados() {
     })
     // Já vem embaralhado e estável no mês — reembaralhar aqui quebraria isso.
     setRodada(cad.questoes)
+    setRespostasStatus({})
+    setSalvo(false)
+    const agoraMs = Date.now()
+    setInicioEm(agoraMs)
+    setAgora(agoraMs)
+  }
+
+  /** As favoritas vão para o mesmo motor dos simulados, com o corte que a pessoa pediu. */
+  function iniciarFavoritas() {
+    const escolhidas = embaralhar(favoritas).slice(0, limiteFavoritas)
+    const porMateria = new Map<string, { materiaNome: string; quantidade: number }>()
+    for (const q of escolhidas) {
+      const nomeMateria = materias.find((m) => m.id === q.materiaId)?.nome ?? 'Matéria'
+      const atual = porMateria.get(q.materiaId)
+      if (atual) atual.quantidade += 1
+      else porMateria.set(q.materiaId, { materiaNome: nomeMateria, quantidade: 1 })
+    }
+    setConfig({
+      nome: `Favoritas · ${escolhidas.length} ${escolhidas.length === 1 ? 'questão' : 'questões'}`,
+      materias: Array.from(porMateria, ([materiaId, v]) => ({ materiaId, ...v })),
+      // Sem cronômetro, como no caderno do mês: favoritas são material de
+      // reforço, e o relógio é do simulado que a pessoa monta lá embaixo.
+      tempoLimiteSegundos: null,
+    })
+    setRodada(escolhidas)
     setRespostasStatus({})
     setSalvo(false)
     const agoraMs = Date.now()
@@ -520,6 +562,49 @@ export default function Simulados() {
             O caderno é o mesmo o mês inteiro — dá para parar e voltar. No mês que vem ele é remontado com o nível que
             você tiver então.
           </p>
+        </Card>
+      )}
+
+      {/* Simulado só com as favoritas.
+          A estrela já existia em cada questão e não levava a lugar nenhum:
+          dava pra marcar e depois só reencontrar a lista em Favoritos. Aqui
+          ela vira material de treino — que é o motivo de alguém marcar uma
+          questão. Só aparece quando há favoritas, para não anunciar uma porta
+          fechada. */}
+      {favoritas.length > 0 && (
+        <Card className="space-y-3">
+          <div className="flex items-start gap-3">
+            <Star className="mt-0.5 h-5 w-5 shrink-0 fill-amber-400 text-amber-400" strokeWidth={1.75} />
+            <div className="min-w-0">
+              <p className="font-bold text-navy">Simulado com as suas favoritas</p>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Você tem <strong className="text-navy">{favoritas.length}</strong>{' '}
+                {favoritas.length === 1 ? 'questão favoritada' : 'questões favoritadas'}. Escolha quantas quer responder
+                — elas são sorteadas entre todas.
+              </p>
+            </div>
+          </div>
+
+          <label className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-slate-600">Quantas questões</span>
+            <input
+              type="number"
+              min={1}
+              max={favoritas.length}
+              value={quantasFavoritas}
+              onChange={(e) => setQuantasFavoritas(Number(e.target.value) || 1)}
+              // Corrigir só na saída do campo: corrigir a cada tecla impede de
+              // apagar o número para digitar outro.
+              onBlur={() => setQuantasFavoritas(limiteFavoritas)}
+              className="w-24 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-blue"
+            />
+            <span className="text-xs text-slate-400">de {favoritas.length}</span>
+          </label>
+
+          <Button onClick={iniciarFavoritas} className="w-full">
+            <Play className="h-4 w-4" strokeWidth={2} />
+            Começar com {limiteFavoritas} {limiteFavoritas === 1 ? 'favorita' : 'favoritas'}
+          </Button>
         </Card>
       )}
 

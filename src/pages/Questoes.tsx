@@ -5,6 +5,7 @@ import { Button } from '../components/ui/Button'
 import { CarregarMais } from '../components/ui/CarregarMais'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { EmptyState } from '../components/ui/EmptyState'
+import { SeloOrigem } from '../components/ui/SeloOrigem'
 import { useAuth } from '../lib/auth/AuthContext'
 import { contemTodasAsPalavras } from '../lib/buscarTexto'
 import { useCorrecaoAdiada } from '../lib/hooks/useCorrecaoAdiada'
@@ -620,7 +621,7 @@ export default function Questoes() {
           {visiveis.map((q) => {
             const temResposta = respostaPorQuestao.has(q.id)
             return (
-              <div key={q.id} className="relative">
+              <div key={q.id}>
                 {/* No modo de seleção a caixa fica ACIMA do cartão, não dentro:
                     o cartão é o mesmo componente de cinco telas, e enfiar uma
                     seleção que só existe aqui dentro dele espalharia esta tela
@@ -641,15 +642,11 @@ export default function Questoes() {
                     {temResposta ? 'Esquecer a resposta desta' : 'Sem resposta gravada'}
                   </label>
                 )}
-                <span
-                  className={`absolute right-4 z-10 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                    selecionando ? 'top-9' : 'top-4'
-                  } ${q.origem === 'biblioteca' ? 'bg-brand-gradient text-white' : 'bg-slate-100 text-slate-500'}`}
-                >
-                  {q.origem === 'biblioteca' ? 'Biblioteca' : 'Minha'}
-                </span>
                 <QuestionCard
                   questao={q}
+                  // Dentro do cartão, e não flutuando por cima dele: em cima é
+                  // onde fica a estrela de favoritar, que o selo escondia.
+                  selo={<SeloOrigem isBiblioteca={q.origem === 'biblioteca'} />}
                   respostaAnterior={respostaPorQuestao.get(q.id) ?? null}
                   onExcluir={podeExcluir(q) ? () => setAExcluir(q) : undefined}
                   rascunho={correcao.rascunhos.get(q.id)?.alternativaEscolhida ?? null}
