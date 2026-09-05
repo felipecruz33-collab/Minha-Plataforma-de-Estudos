@@ -1,15 +1,15 @@
 import { ArrowLeft, BookOpenCheck, CheckSquare, Eraser, Eye, Search, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { QuestionCard } from '../components/QuestionCard'
 import { Button } from '../components/ui/Button'
-import { CarregarMais } from '../components/ui/CarregarMais'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { EmptyState } from '../components/ui/EmptyState'
+import { Paginacao } from '../components/ui/Paginacao'
 import { SeloOrigem } from '../components/ui/SeloOrigem'
 import { useAuth } from '../lib/auth/AuthContext'
 import { contemTodasAsPalavras } from '../lib/buscarTexto'
 import { useCorrecaoAdiada } from '../lib/hooks/useCorrecaoAdiada'
-import { useListaVisivel } from '../lib/hooks/useListaVisivel'
+import { usePaginacao } from '../lib/hooks/usePaginacao'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo, type MateriaComContagem } from '../lib/repo'
 import type { Questao, Resposta } from '../lib/types'
@@ -188,7 +188,25 @@ export default function Questoes() {
     })
   }, [questoes, respostaPorQuestao, busca, materiaId, aulaId, situacao, banca, ano, assunto, correcao.rascunhos, correcao.reveladasAgora])
 
-  const { visiveis, total, temMais, verMais } = useListaVisivel(filtradas)
+  /**
+   * A identidade da BUSCA, que é o que pode zerar a página.
+   *
+   * De propósito não inclui a lista nem a fila de correção: responder uma
+   * questão recalcula `filtradas`, e era isso que fechava a lista de volta nas
+   * 20 primeiras no meio de uma bateria.
+   */
+  const chaveDaBusca = [busca.trim(), materiaId, aulaId, situacao, banca, ano, assunto].join('|')
+  const pag = usePaginacao(filtradas, chaveDaBusca)
+  const topoDaLista = useRef<HTMLDivElement>(null)
+
+  function irParaPagina(p: number) {
+    pag.irPara(p)
+    // Trocar de página pelo rodapé deixaria a pessoa no fim da página nova,
+    // lendo a última questão primeiro. O `scroll-mt-16` da lista entra aqui:
+    // o cabeçalho é fixo e tem 56px, então rolar até o topo sem essa margem
+    // esconderia as primeiras questões atrás dele.
+    topoDaLista.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   const temFiltro = Boolean(busca.trim() || materiaId || aulaId || situacao || banca || ano || assunto)
 
@@ -539,7 +557,9 @@ export default function Questoes() {
               onClick={() => setSelecionadas(new Set(visiveisComResposta))}
               className="text-xs font-medium text-brand-blue hover:underline"
             >
-              marcar todas da lista
+              {/* "da lista" virou ambíguo agora que existem páginas: isto
+                  sempre marcou a BUSCA inteira, e não só o que está à vista. */}
+              marcar as {visiveisComResposta.length} da busca
             </button>
             {selecionadas.size > 0 && (
               <button type="button" onClick={() => setSelecionadas(new Set())} className="text-xs font-medium text-slate-400 hover:underline">
@@ -617,8 +637,16 @@ export default function Questoes() {
           )}
         </EmptyState>
       ) : (
-        <div className="space-y-3">
-          {visiveis.map((q) => {
+        <div className="scroll-mt-16 space-y-3" ref={topoDaLista}>
+          <Paginacao
+            pagina={pag.pagina}
+            totalPaginas={pag.totalPaginas}
+            de={pag.de}
+            ate={pag.ate}
+            total={pag.total}
+            onIr={irParaPagina}
+          />
+          {pag.visiveis.map((q) => {
             const temResposta = respostaPorQuestao.has(q.id)
             return (
               <div key={q.id}>
@@ -666,7 +694,14 @@ export default function Questoes() {
               </div>
             )
           })}
-          <CarregarMais mostrando={visiveis.length} total={total} temMais={temMais} onVerMais={verMais} />
+          <Paginacao
+            pagina={pag.pagina}
+            totalPaginas={pag.totalPaginas}
+            de={pag.de}
+            ate={pag.ate}
+            total={pag.total}
+            onIr={irParaPagina}
+          />
         </div>
       )}
 

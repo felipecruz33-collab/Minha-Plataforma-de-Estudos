@@ -210,6 +210,15 @@ export class LocalRepository implements DataRepository {
     return aula
   }
 
+  async renomearMateria(materiaId: string, nome: string): Promise<Materia> {
+    const s = load()
+    const materia = s.materias.find((m) => m.id === materiaId)
+    if (!materia) throw new Error('Matéria não encontrada')
+    materia.nome = nome
+    save(s)
+    return materia
+  }
+
   async reordenarAulas(materiaId: string, aulaIdsEmOrdem: string[]): Promise<void> {
     const s = load()
     const posicao = new Map(aulaIdsEmOrdem.map((id, i) => [id, i]))
