@@ -1,4 +1,4 @@
-import { EyeOff, Star, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, EyeOff, Star, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useAuth } from '../lib/auth/AuthContext'
 import { repo } from '../lib/repo'
@@ -55,6 +55,7 @@ export function QuestionCard({
   const { user, perfil, toggleFavorito } = useAuth()
   const [escolha, setEscolha] = useState<string | null>(respostaAnterior?.alternativaEscolhida ?? null)
   const [respondida, setRespondida] = useState(!!respostaAnterior)
+  const [verOutras, setVerOutras] = useState(false)
 
   // Só depende do id: responder aqui na hora NÃO muda `respostaAnterior` (a
   // tela de origem não recarrega a lista a cada clique), então este efeito não
@@ -82,6 +83,16 @@ export function QuestionCard({
   const marcada = emRascunho ? !!rascunho : respondida
   /** Marcada é uma coisa; MOSTRAR o resultado é outra. */
   const mostrarResultado = !emRascunho && respondida
+  const acertou = escolha === questao.gabarito
+  /**
+   * As demais alternativas que TÊM comentário gravado.
+   *
+   * Fora a marcada, que já aparece logo acima — repetir o mesmo texto duas
+   * vezes na mesma caixa só faria a pessoa reler o que acabou de ler. E só as
+   * comentadas: uma lista com letras sem texto nenhum promete explicação e não
+   * entrega.
+   */
+  const outrasComentadas = questao.alternativas.filter((a) => a.id !== escolha && !!questao.altExp[a.id])
 
   async function responder(altId: string) {
     if (respondida || !user) return
@@ -187,11 +198,63 @@ export function QuestionCard({
 
       {mostrarResultado && (
         <div className="mt-3 space-y-2 rounded-lg bg-slate-50 p-3 text-sm">
-          <p className={escolha === questao.gabarito ? 'font-semibold text-emerald-700' : 'font-semibold text-rose-700'}>
-            {escolha === questao.gabarito ? 'Você acertou!' : `Gabarito: ${questao.gabarito}`}
+          <p className={acertou ? 'font-semibold text-emerald-700' : 'font-semibold text-rose-700'}>
+            {acertou ? 'Você acertou!' : `Gabarito: ${questao.gabarito}`}
           </p>
           {questao.explicacao && <p className="text-slate-600">{questao.explicacao}</p>}
           {questao.altExp[escolha ?? ''] && <p className="text-slate-500">{questao.altExp[escolha ?? '']}</p>}
+
+          {/* O comentário das OUTRAS alternativas.
+              Estava tudo gravado e nada era mostrado: só a alternativa marcada
+              tinha voz, e quem acertava não lia nenhum comentário — justamente
+              quem tem mais chance de ter acertado por eliminação errada. Saber
+              por que as outras três caem é metade do estudo de uma questão de
+              múltipla escolha.
+
+              Fechado por padrão porque a questão já entrega o essencial acima;
+              isto é para quem quer ir mais fundo, e aberto de saída empurraria
+              o próximo enunciado para fora da tela. */}
+          {outrasComentadas.length > 0 && (
+            <div className="border-t border-slate-200 pt-2">
+              <button
+                type="button"
+                onClick={() => setVerOutras((v) => !v)}
+                aria-expanded={verOutras}
+                className="flex items-center gap-1 text-xs font-semibold text-brand-blue"
+              >
+                {verOutras ? (
+                  <ChevronDown className="h-3.5 w-3.5" strokeWidth={2.5} />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.5} />
+                )}
+                {acertou
+                  ? 'Por que as outras estão erradas'
+                  : // Errando, entre "as outras" está a certa — chamar todas de
+                    // erradas seria mentira em cima do erro da pessoa.
+                    'Comentário das outras alternativas'}
+              </button>
+
+              {verOutras && (
+                <ul className="mt-2 space-y-2">
+                  {outrasComentadas.map((alt) => (
+                    <li key={alt.id} className="flex gap-2">
+                      <span
+                        className={`mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded text-xs font-bold ${
+                          alt.id === questao.gabarito ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
+                        }`}
+                      >
+                        {alt.id}
+                      </span>
+                      <span className="text-slate-500">
+                        {alt.id === questao.gabarito && <strong className="text-emerald-700">Esta era a certa. </strong>}
+                        {questao.altExp[alt.id]}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
       )}
 
