@@ -326,6 +326,18 @@ export class SupabaseRepository implements DataRepository {
     return this.aulaObrigatoria(aulaId)
   }
 
+  async renomearMateria(materiaId: string, nome: string): Promise<Materia> {
+    const { data, error } = await this.db().from('materias').update({ nome }).eq('id', materiaId).select().single()
+    if (error) throw error
+    return {
+      id: data.id,
+      userId: data.user_id,
+      nome: data.nome,
+      isBiblioteca: data.is_biblioteca,
+      criadoEm: data.criado_em,
+    }
+  }
+
   async reordenarAulas(materiaId: string, aulaIdsEmOrdem: string[]): Promise<void> {
     // Uma atualização por aula em vez de um upsert em lote: o upsert exigiria
     // mandar a linha inteira de volta, e um campo esquecido no caminho

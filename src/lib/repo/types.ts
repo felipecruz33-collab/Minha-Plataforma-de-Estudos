@@ -101,6 +101,15 @@ export interface DataRepository {
   ): Promise<Aula>
   deleteAula(aulaId: string): Promise<void>
   renomearAula(aulaId: string, titulo: string): Promise<Aula>
+  /**
+   * Troca o nome de uma matéria.
+   *
+   * Quem pode é o banco que decide, não esta linha: matéria própria é do dono,
+   * matéria da biblioteca é do administrador — a mesma regra que já vale para
+   * criar e apagar. Só o nome muda; aulas, questões e respostas continuam
+   * penduradas no mesmo id.
+   */
+  renomearMateria(materiaId: string, nome: string): Promise<Materia>
   /** Grava a ordem das aulas de uma matéria, na sequência em que os ids vierem. */
   reordenarAulas(materiaId: string, aulaIdsEmOrdem: string[]): Promise<void>
 

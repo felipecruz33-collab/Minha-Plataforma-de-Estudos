@@ -163,6 +163,9 @@ export class CachedRepository implements DataRepository {
   renomearAula(aulaId: string, titulo: string) {
     return this.escrever(() => this.base.renomearAula(aulaId, titulo))
   }
+  renomearMateria(materiaId: string, nome: string) {
+    return this.escrever(() => this.base.renomearMateria(materiaId, nome))
+  }
   reordenarAulas(materiaId: string, aulaIdsEmOrdem: string[]) {
     return this.escrever(() => this.base.reordenarAulas(materiaId, aulaIdsEmOrdem))
   }
