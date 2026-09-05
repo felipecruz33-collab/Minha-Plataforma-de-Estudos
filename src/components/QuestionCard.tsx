@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, EyeOff, Star, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useAuth } from '../lib/auth/AuthContext'
 import { repo } from '../lib/repo'
 import type { Questao, Resposta } from '../lib/types'
@@ -42,6 +42,17 @@ interface QuestionCardProps {
   onMarcarRascunho?: (alternativaId: string) => void
   /** A alternativa marcada em rascunho, se houver. */
   rascunho?: string | null
+  /**
+   * Carimbo da tela, ao lado da estrela — hoje é o de origem da matéria.
+   *
+   * Existe porque a tela de Questões desenhava esse carimbo POR CIMA do
+   * cartão, em posição absoluta no canto superior direito: exatamente onde
+   * mora a estrela de favoritar. O resultado é que na lista de questões a
+   * estrela ficava escondida atrás do selo e não dava pra favoritar nada.
+   * Carimbo que a tela quer mostrar tem que ter lugar dentro do cartão, e não
+   * uma camada em cima dele.
+   */
+  selo?: ReactNode
 }
 
 export function QuestionCard({
@@ -51,6 +62,7 @@ export function QuestionCard({
   onRespondida,
   onMarcarRascunho,
   rascunho = null,
+  selo,
 }: QuestionCardProps) {
   const { user, perfil, toggleFavorito } = useAuth()
   const [escolha, setEscolha] = useState<string | null>(respostaAnterior?.alternativaEscolhida ?? null)
@@ -127,17 +139,21 @@ export function QuestionCard({
           {questao.tema && <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600">{questao.tema}</span>}
           {metaInfo && <span>{metaInfo}</span>}
         </div>
-        <button
-          type="button"
-          onClick={() => toggleFavorito(questao.id)}
-          aria-label="Favoritar"
-          className="shrink-0"
-        >
-          <Star
-            className={`h-5 w-5 ${favorita ? 'fill-amber-400 text-amber-400' : 'text-slate-300'}`}
-            strokeWidth={1.75}
-          />
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {selo}
+          <button
+            type="button"
+            onClick={() => toggleFavorito(questao.id)}
+            aria-label={favorita ? 'Desfavoritar' : 'Favoritar'}
+            aria-pressed={favorita}
+            className="shrink-0"
+          >
+            <Star
+              className={`h-5 w-5 ${favorita ? 'fill-amber-400 text-amber-400' : 'text-slate-300'}`}
+              strokeWidth={1.75}
+            />
+          </button>
+        </div>
       </div>
 
       {/* `whitespace-pre-line` porque o enunciado pode trazer um TEXTO DE
