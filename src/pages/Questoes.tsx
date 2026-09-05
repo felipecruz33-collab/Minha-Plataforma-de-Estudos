@@ -367,7 +367,19 @@ export default function Questoes() {
     }
   }
 
-  const selectCls = 'rounded-lg border border-slate-300 px-2.5 py-2 text-sm outline-none focus:border-brand-blue'
+  /**
+   * `min-w-0 max-w-full` não é enfeite: um <select> se dimensiona pela OPÇÃO
+   * MAIS LARGA, e as opções aqui são temas e títulos de aula escritos por
+   * quem montou o material — frases inteiras. Um tema comprido esticava o
+   * select para além da tela, a página inteira ganhava rolagem horizontal, e
+   * tudo aparecia espremido num terço da largura. Medido: 724px de select numa
+   * tela de 412px.
+   *
+   * Os dois juntos, e não só o `max-w-full`: num item de flex o mínimo
+   * automático é o tamanho do conteúdo, e mínimo ganha de máximo em CSS — sem
+   * zerar o mínimo, o teto não seria respeitado.
+   */
+  const selectCls = 'min-w-0 max-w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm outline-none focus:border-brand-blue'
 
   return (
     <div>

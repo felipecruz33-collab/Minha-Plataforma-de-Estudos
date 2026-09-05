@@ -13,7 +13,7 @@ import { repo } from '../lib/repo'
 import { estadosDeRevisao, textoDoPrazo, type EstadoRevisao } from '../lib/revisaoEspacada'
 import type { Resposta } from '../lib/types'
 
-const selectCls = 'rounded-lg border border-slate-300 px-2.5 py-2 text-sm outline-none focus:border-brand-blue'
+const selectCls = 'min-w-0 max-w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm outline-none focus:border-brand-blue'
 
 /** Etiqueta do prazo, acima do cartão — vermelha quando já passou da hora. */
 function Prazo({ estado }: { estado: EstadoRevisao }) {
