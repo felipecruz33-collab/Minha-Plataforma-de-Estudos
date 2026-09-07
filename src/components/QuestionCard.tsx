@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth/AuthContext'
 import { repo } from '../lib/repo'
 import type { Questao, Resposta } from '../lib/types'
 import { Card } from './ui/Card'
+import { TextoComTabelas } from './ui/TextoComTabelas'
 
 interface QuestionCardProps {
   questao: Questao
@@ -156,11 +157,12 @@ export function QuestionCard({
         </div>
       </div>
 
-      {/* `whitespace-pre-line` porque o enunciado pode trazer um TEXTO DE
-          APOIO antes do comando — o poema, a notícia, o trecho de lei que a
-          questão manda ler. Sem isso o HTML come as quebras de linha e o texto
-          inteiro vira um bloco só, colado na pergunta. */}
-      <p className="mb-3 whitespace-pre-line text-sm leading-relaxed text-slate-800">{questao.enunciado}</p>
+      {/* O enunciado pode trazer um TEXTO DE APOIO antes do comando — o
+          poema, a notícia, o trecho de lei, e às vezes uma TABELA (orçamento,
+          balanço, série de dados) sem a qual não dá para responder. As quebras
+          de linha são preservadas e as linhas com barras viram tabela de
+          verdade; ver `TextoComTabelas`. */}
+      <TextoComTabelas texto={questao.enunciado} className="mb-3 text-sm leading-relaxed text-slate-800" />
 
       <div className="space-y-2">
         {questao.alternativas.map((alt) => {
@@ -217,8 +219,12 @@ export function QuestionCard({
           <p className={acertou ? 'font-semibold text-emerald-700' : 'font-semibold text-rose-700'}>
             {acertou ? 'Você acertou!' : `Gabarito: ${questao.gabarito}`}
           </p>
-          {questao.explicacao && <p className="text-slate-600">{questao.explicacao}</p>}
-          {questao.altExp[escolha ?? ''] && <p className="text-slate-500">{questao.altExp[escolha ?? '']}</p>}
+          {/* O comentário do gabarito também comenta tabela — quando a
+              questão traz uma, a explicação costuma repetir os números. */}
+          {questao.explicacao && <TextoComTabelas texto={questao.explicacao} className="text-slate-600" />}
+          {questao.altExp[escolha ?? ''] && (
+            <TextoComTabelas texto={questao.altExp[escolha ?? '']} className="text-slate-500" />
+          )}
 
           {/* O comentário das OUTRAS alternativas.
               Estava tudo gravado e nada era mostrado: só a alternativa marcada
