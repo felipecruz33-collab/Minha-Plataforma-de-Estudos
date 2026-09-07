@@ -72,6 +72,12 @@ QUESTÕES (campo "aula.questoes" de cada aula)
 - O enunciado precisa ser AUTOSSUFICIENTE: quem nunca viu o PDF tem que conseguir responder lendo só o campo "enunciado". Copie o texto de apoio INTEIRO no começo do enunciado, antes do comando da questão, e nunca o resuma nem o corte.
 - Se o mesmo texto serve a várias questões, REPITA ele em cada uma. Cada questão vive sozinha no aplicativo: elas são embaralhadas em simulados, filtradas por assunto e revisadas isoladamente, então "o texto acima" ou "conforme o texto da questão 1" vira uma referência para lugar nenhum.
 - Formato: o texto de apoio primeiro, depois uma linha em branco, depois o comando. Não invente rótulo nem numeração — só o texto e a pergunta.
+- TABELAS dentro do enunciado: quando o apoio for uma tabela (orçamento, balanço, série de dados), escreva ela em linhas com barras, uma linha por linha da tabela, cabeçalho na primeira e uma linha de traços logo abaixo. Exemplo:
+  | Descrição e justificativa do objeto | Valor |
+  | --- | --- |
+  | Aquisição de uniformes | R$ 100.000,00 |
+  | Total | R$ 774.938,00 |
+  O aplicativo desenha isso como tabela de verdade. Nunca despeje os valores em texto corrido nem descarte a tabela: sem ela a questão fica impossível de responder.
 - Se a questão depende de uma imagem, gráfico ou figura que não veio no texto, escreva no enunciado o que dá para descrever e diga que a figura não veio. Nunca invente o conteúdo da figura.
 - Se banca, ano, órgão ou gabarito não estiverem no texto, deixe o campo como string vazia "" — nunca invente ou "chute".
 - Cada alternativa tem um "id" único entre A e E; "gabarito" é um desses ids.
