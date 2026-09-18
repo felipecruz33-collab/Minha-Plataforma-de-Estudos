@@ -32,10 +32,17 @@ name: Manter Supabase acordado
 
 on:
   schedule:
-    # Todo dia, 09:12 UTC. Diário e não a cada dois dias porque uma falha de
-    # rede isolada não pode consumir metade da margem até a pausa. O horário
-    # quebrado é de propósito: no minuto cheio o GitHub tem fila e atrasa.
-    - cron: '12 9 * * *'
+    # Quatro vezes por dia, e não uma. A Supabase mandou o aviso de "mais de 7
+    # dias sem atividade SUFICIENTE" enquanto este robô batia todo dia e
+    # recebia 200 — ou seja, o critério deles tem limiar de VOLUME, e uma
+    # batida diária cabe dentro do que consideram parado. Quatro batidas
+    # espalhadas pelo dia também significam que uma queda de rede de algumas
+    # horas não zera o dia.
+    #
+    # O minuto quebrado é de propósito: no minuto cheio o GitHub enfileira e
+    # atrasa. (Atrasa de qualquer jeito — na prática estas execuções saem
+    # algumas horas depois do horário marcado.)
+    - cron: '12 3,9,15,21 * * *'
   workflow_dispatch: {}
 
 # Duas execuções ao mesmo tempo não ajudam em nada — a segunda só polui o
@@ -62,6 +69,25 @@ jobs:
           fi
 
           base="${URL%/}"
+
+          # ESCRITA primeiro, leitura depois. A leitura prova que o projeto
+          # responde; a escrita prova que houve trabalho no banco — e é a
+          # segunda que a medição de atividade da Supabase parece exigir.
+          #
+          # Corpo `{}`: a tabela `batimento` não tem coluna nenhuma para
+          # preencher (de propósito — ver a migração 0018), então a linha nasce
+          # só de valores padrão. Nada do que vem daqui é guardado.
+          codigo_escrita=$(curl -sS -o /tmp/escrita.txt -w '%{http_code}' \
+            --max-time 30 \
+            -X POST \
+            -H "apikey: ${CHAVE}" \
+            -H "Authorization: Bearer ${CHAVE}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            --data '{}' \
+            "${base}/rest/v1/batimento") || true
+          codigo_escrita="${codigo_escrita:-000}"
+          echo "  Batimento (escrita): HTTP ${codigo_escrita}"
 
           # Duas portas de entrada diferentes do mesmo projeto. A primeira é a
           # que interessa (ela chega ao BANCO); a segunda é uma segunda chance
@@ -120,8 +146,24 @@ jobs:
             done
           done
 
+          # 201 = linha gravada. Se a escrita passou, o projeto está no ar E
+          # houve atividade de verdade: não precisa nem olhar a leitura.
+          if [ "${codigo_escrita}" = "201" ]; then
+            acordou=1
+            resumo="batimento=201 ${resumo}"
+          fi
+
           if [ "${acordou}" = "1" ]; then
-            echo "### ✅ Supabase acordado" >> "${GITHUB_STEP_SUMMARY}"
+            # Projeto no ar, mas o batimento não gravou. Não é motivo para
+            # alarme vermelho — é motivo para consertar antes que o aviso de
+            # pausa volte, porque a escrita é a parte que conta como atividade.
+            if [ "${codigo_escrita}" != "201" ]; then
+              echo "::warning title=Batimento não gravou::A leitura funcionou, mas o POST em /rest/v1/batimento devolveu ${codigo_escrita}. A migração 0018 já foi aplicada no painel do Supabase?"
+              echo "### ⚠️ Projeto no ar, mas sem gravar o batimento" >> "${GITHUB_STEP_SUMMARY}"
+              echo "POST /rest/v1/batimento devolveu \`${codigo_escrita}\` — confira se a migração \`0018_batimento.sql\` foi aplicada." >> "${GITHUB_STEP_SUMMARY}"
+            else
+              echo "### ✅ Supabase acordado, com batimento gravado" >> "${GITHUB_STEP_SUMMARY}"
+            fi
             echo "Respostas: \`${resumo}\`" >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
