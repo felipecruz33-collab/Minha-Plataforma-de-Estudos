@@ -19,6 +19,7 @@ import NovaSenha from './pages/NovaSenha'
 import Perfil from './pages/Perfil'
 import Premium from './pages/Premium'
 import Questoes from './pages/Questoes'
+import Anotacoes from './pages/Anotacoes'
 import Revisao from './pages/Revisao'
 import Simulados from './pages/Simulados'
 import Usuarios from './pages/Usuarios'
@@ -66,6 +67,7 @@ function AppRoutes() {
         <Route path="/favoritos" element={<Favoritos />} />
         <Route path="/erradas" element={<Erradas />} />
         <Route path="/revisao" element={<Revisao />} />
+        <Route path="/anotacoes" element={<Anotacoes />} />
         <Route path="/backup" element={<Backup />} />
         <Route path="/geracoes" element={<Geracoes />} />
         <Route path="/premium" element={<Premium />} />

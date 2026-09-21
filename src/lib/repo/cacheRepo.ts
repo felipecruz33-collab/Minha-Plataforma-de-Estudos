@@ -1,4 +1,4 @@
-import type { Aula, AulaImportPayload, Cronograma, GeracaoIA, Materia, Perfil, Resposta, Simulado } from '../types'
+import type { Anotacao, Aula, AulaImportPayload, Cronograma, GeracaoIA, Materia, Perfil, Resposta, Simulado } from '../types'
 import type { AulaComQuestoes, BackupData, DataRepository, MateriaComContagem, RespostaParaGravar } from './types'
 
 /**
@@ -131,6 +131,21 @@ export class CachedRepository implements DataRepository {
   }
   listGeracoes(userId: string) {
     return this.ler(`geracoes:${userId}`, () => this.base.listGeracoes(userId))
+  }
+  listAnotacoes(userId: string) {
+    return this.ler(`anotacoes:${userId}`, () => this.base.listAnotacoes(userId))
+  }
+  criarAnotacao(anotacao: Pick<Anotacao, 'userId' | 'materiaId' | 'titulo' | 'corpo'>) {
+    return this.escrever(() => this.base.criarAnotacao(anotacao))
+  }
+  salvarAnotacao(
+    anotacaoId: string,
+    campos: Partial<Pick<Anotacao, 'materiaId' | 'titulo' | 'corpo' | 'fixada'>>,
+  ) {
+    return this.escrever(() => this.base.salvarAnotacao(anotacaoId, campos))
+  }
+  excluirAnotacao(anotacaoId: string) {
+    return this.escrever(() => this.base.excluirAnotacao(anotacaoId))
   }
   listSimulados(userId: string) {
     return this.ler(`simulados:${userId}`, () => this.base.listSimulados(userId))
