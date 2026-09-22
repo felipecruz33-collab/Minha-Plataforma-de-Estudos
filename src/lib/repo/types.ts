@@ -226,7 +226,7 @@ export interface DataRepository {
 
   /** As anotações da pessoa, fixadas primeiro e depois da mais recente para a mais antiga. */
   listAnotacoes(userId: string): Promise<Anotacao[]>
-  criarAnotacao(anotacao: Pick<Anotacao, 'userId' | 'materiaId' | 'titulo' | 'corpo'>): Promise<Anotacao>
+  criarAnotacao(anotacao: Pick<Anotacao, 'userId' | 'materiaId' | 'aulaId' | 'titulo' | 'corpo'>): Promise<Anotacao>
   /**
    * Grava o que mudou numa anotação, e carimba `atualizadoEm`.
    *
@@ -236,7 +236,7 @@ export interface DataRepository {
    */
   salvarAnotacao(
     anotacaoId: string,
-    campos: Partial<Pick<Anotacao, 'materiaId' | 'titulo' | 'corpo' | 'fixada'>>,
+    campos: Partial<Pick<Anotacao, 'materiaId' | 'aulaId' | 'titulo' | 'corpo' | 'fixada'>>,
   ): Promise<Anotacao>
   excluirAnotacao(anotacaoId: string): Promise<void>
 

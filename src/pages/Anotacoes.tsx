@@ -17,7 +17,9 @@ import { EmptyState } from '../components/ui/EmptyState'
 import { TextoComTabelas } from '../components/ui/TextoComTabelas'
 import { useAuth } from '../lib/auth/AuthContext'
 import { contemTodasAsPalavras } from '../lib/buscarTexto'
-import { repo, type MateriaComContagem } from '../lib/repo'
+import { agruparPorOrigem, GRUPO_BIBLIOTECA, GRUPO_MINHAS, nomesDuplicados, rotuloDaMateria } from '../lib/materiasPorOrigem'
+import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
+import { repo, type AulaBasica, type MateriaComContagem } from '../lib/repo'
 import { tempoRelativo } from '../lib/tempoRelativo'
 import type { Anotacao } from '../lib/types'
 
@@ -31,21 +33,24 @@ type EstadoSalvamento = 'ocioso' | 'salvando' | 'salvo' | 'erro'
 
 interface Rascunho {
   materiaId: string | null
+  aulaId: string | null
   titulo: string
   corpo: string
 }
 
-const VAZIO: Rascunho = { materiaId: null, titulo: '', corpo: '' }
+const VAZIO: Rascunho = { materiaId: null, aulaId: null, titulo: '', corpo: '' }
 
 const selectCls =
   'min-w-0 max-w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm outline-none focus:border-brand-blue'
 
 export default function Anotacoes() {
-  const { user } = useAuth()
+  const { user, perfil } = useAuth()
   const [anotacoes, setAnotacoes] = useState<Anotacao[] | null>(null)
   const [materias, setMaterias] = useState<MateriaComContagem[]>([])
+  const [aulas, setAulas] = useState<AulaBasica[]>([])
   const [busca, setBusca] = useState('')
   const [filtroMateria, setFiltroMateria] = useState('')
+  const [filtroAula, setFiltroAula] = useState('')
 
   /** Qual anotação está aberta no editor: um id, `NOVA`, ou nenhuma. */
   const [abertaId, setAbertaId] = useState<string | null>(null)
@@ -57,31 +62,61 @@ export default function Anotacoes() {
   useEffect(() => {
     if (!user) return
     let cancelado = false
-    Promise.all([repo.listAnotacoes(user.id), repo.listMaterias(user.id)]).then(([as, ms]) => {
+    // A biblioteca entra junto das matérias próprias — é material de estudo
+    // igual, e anotar sobre ele é o uso mais natural que existe. Quem não tem
+    // Premium simplesmente não recebe essa parte da lista.
+    const podeBiblioteca = calcPodeVerBiblioteca(perfil)
+    Promise.all([
+      repo.listAnotacoes(user.id),
+      repo.listMaterias(user.id),
+      podeBiblioteca ? repo.listBiblioteca() : Promise.resolve<MateriaComContagem[]>([]),
+    ]).then(async ([as, minhas, biblio]) => {
       if (cancelado) return
+      const todas = [...minhas, ...biblio]
       setAnotacoes(as)
-      setMaterias(ms)
+      setMaterias(todas)
+      // Uma consulta só para as aulas de todas as matérias, sem blocos nem
+      // questões: aqui só interessa o título para montar o segundo select.
+      const listaAulas = await repo.listAulasBasicas(todas.map((m) => m.id))
+      if (!cancelado) setAulas(listaAulas)
     })
     return () => {
       cancelado = true
     }
-  }, [user])
+  }, [user, perfil?.isPremium, perfil?.isAdmin])
+
+  /** Nomes repetidos entre as duas origens — só eles precisam de carimbo. */
+  const duplicados = useMemo(() => nomesDuplicados(materias), [materias])
+  const grupos = useMemo(() => agruparPorOrigem(materias), [materias])
+
+  const aulasDaMateria = useCallback(
+    (materiaId: string | null) => (materiaId ? aulas.filter((a) => a.materiaId === materiaId) : []),
+    [aulas],
+  )
 
   const nomeDaMateria = useCallback(
-    (materiaId: string | null) => (materiaId ? materias.find((m) => m.id === materiaId)?.nome ?? null : null),
-    [materias],
+    (materiaId: string | null) => {
+      const m = materiaId ? materias.find((x) => x.id === materiaId) : null
+      return m ? rotuloDaMateria(m, duplicados) : null
+    },
+    [materias, duplicados],
+  )
+  const tituloDaAula = useCallback(
+    (aulaId: string | null) => (aulaId ? aulas.find((a) => a.id === aulaId)?.titulo ?? null : null),
+    [aulas],
   )
 
   const lista = useMemo(() => {
     const termo = busca.trim()
     return (anotacoes ?? []).filter((a) => {
       if (filtroMateria === 'sem' ? a.materiaId !== null : filtroMateria && a.materiaId !== filtroMateria) return false
+      if (filtroAula && a.aulaId !== filtroAula) return false
       // A busca cobre título E corpo: quem procura uma anotação lembra de uma
       // frase que escreveu no meio dela, quase nunca do título que deu.
       if (termo && !contemTodasAsPalavras(`${a.titulo} ${a.corpo}`, termo)) return false
       return true
     })
-  }, [anotacoes, busca, filtroMateria])
+  }, [anotacoes, busca, filtroMateria, filtroAula])
 
   // ---------------------------------------------------------------- salvar --
   //
@@ -110,6 +145,7 @@ export default function Anotacoes() {
           const nova = await repo.criarAnotacao({
             userId: user.id,
             materiaId: valores.materiaId,
+            aulaId: valores.aulaId,
             titulo: valores.titulo,
             corpo: valores.corpo,
           })
@@ -135,7 +171,8 @@ export default function Anotacoes() {
     const igual =
       rascunho.titulo === ultimoSalvo.current.titulo &&
       rascunho.corpo === ultimoSalvo.current.corpo &&
-      rascunho.materiaId === ultimoSalvo.current.materiaId
+      rascunho.materiaId === ultimoSalvo.current.materiaId &&
+      rascunho.aulaId === ultimoSalvo.current.aulaId
     if (igual) return
 
     // "Salvando…" já na tecla, e não só quando a gravação parte. Durante a
@@ -159,7 +196,8 @@ export default function Anotacoes() {
       const igual =
         rascunho.titulo === ultimoSalvo.current.titulo &&
         rascunho.corpo === ultimoSalvo.current.corpo &&
-        rascunho.materiaId === ultimoSalvo.current.materiaId
+        rascunho.materiaId === ultimoSalvo.current.materiaId &&
+        rascunho.aulaId === ultimoSalvo.current.aulaId
       if (!igual) gravar(abertaId, rascunho)
     }
     setAbertaId(null)
@@ -170,7 +208,7 @@ export default function Anotacoes() {
 
   function abrir(a: Anotacao) {
     if (salvarTimer.current) clearTimeout(salvarTimer.current)
-    const valores = { materiaId: a.materiaId, titulo: a.titulo, corpo: a.corpo }
+    const valores = { materiaId: a.materiaId, aulaId: a.aulaId, titulo: a.titulo, corpo: a.corpo }
     ultimoSalvo.current = valores
     setRascunho(valores)
     setAbertaId(a.id)
@@ -182,7 +220,11 @@ export default function Anotacoes() {
     if (salvarTimer.current) clearTimeout(salvarTimer.current)
     // A matéria do filtro já vem escolhida: quem está lendo as anotações de
     // Português e cria uma nova quase sempre quer outra de Português.
-    const valores = { ...VAZIO, materiaId: filtroMateria && filtroMateria !== 'sem' ? filtroMateria : null }
+    const valores = {
+      ...VAZIO,
+      materiaId: filtroMateria && filtroMateria !== 'sem' ? filtroMateria : null,
+      aulaId: filtroAula || null,
+    }
     ultimoSalvo.current = VAZIO
     setRascunho(valores)
     setAbertaId(NOVA)
@@ -238,19 +280,57 @@ export default function Anotacoes() {
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        {/* As duas origens em seções separadas, e não numa lista misturada:
+            é comum ter "Português" seu e "Português" da biblioteca, e numa
+            lista única os dois viram a mesma linha. */}
         <select
           value={rascunho.materiaId ?? ''}
-          onChange={(e) => setRascunho((r) => ({ ...r, materiaId: e.target.value || null }))}
+          onChange={(e) =>
+            // Trocar de matéria solta a aula: a aula anterior é de outra
+            // matéria, e deixá-la presa seria um vínculo que não existe.
+            setRascunho((r) => ({ ...r, materiaId: e.target.value || null, aulaId: null }))
+          }
           aria-label="Matéria da anotação"
           className={selectCls}
         >
           <option value="">Sem matéria</option>
-          {materias.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.nome}
-            </option>
-          ))}
+          {grupos.minhas.length > 0 && (
+            <optgroup label={GRUPO_MINHAS}>
+              {grupos.minhas.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {rotuloDaMateria(m, duplicados)}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {grupos.biblioteca.length > 0 && (
+            <optgroup label={GRUPO_BIBLIOTECA}>
+              {grupos.biblioteca.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {rotuloDaMateria(m, duplicados)}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
+
+        {/* A aula só aparece depois da matéria, e só se ela tiver aulas —
+            um select vazio seria uma promessa sem conteúdo. */}
+        {aulasDaMateria(rascunho.materiaId).length > 0 && (
+          <select
+            value={rascunho.aulaId ?? ''}
+            onChange={(e) => setRascunho((r) => ({ ...r, aulaId: e.target.value || null }))}
+            aria-label="Aula da anotação"
+            className={selectCls}
+          >
+            <option value="">Toda a matéria</option>
+            {aulasDaMateria(rascunho.materiaId).map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.titulo}
+              </option>
+            ))}
+          </select>
+        )}
 
         <button
           type="button"
@@ -345,18 +425,52 @@ export default function Anotacoes() {
 
           <select
             value={filtroMateria}
-            onChange={(e) => setFiltroMateria(e.target.value)}
+            onChange={(e) => {
+              setFiltroMateria(e.target.value)
+              // Sem isto sobraria uma aula de OUTRA matéria no filtro: a lista
+              // zeraria e nada na tela explicaria por quê.
+              setFiltroAula('')
+            }}
             aria-label="Filtrar por matéria"
-            className={`${selectCls} mb-3 w-full`}
+            className={`${selectCls} mb-2 w-full`}
           >
             <option value="">Todas as matérias</option>
             <option value="sem">Sem matéria</option>
-            {materias.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.nome}
-              </option>
-            ))}
+            {grupos.minhas.length > 0 && (
+              <optgroup label={GRUPO_MINHAS}>
+                {grupos.minhas.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {rotuloDaMateria(m, duplicados)}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {grupos.biblioteca.length > 0 && (
+              <optgroup label={GRUPO_BIBLIOTECA}>
+                {grupos.biblioteca.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {rotuloDaMateria(m, duplicados)}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
+
+          {aulasDaMateria(filtroMateria && filtroMateria !== 'sem' ? filtroMateria : null).length > 0 && (
+            <select
+              value={filtroAula}
+              onChange={(e) => setFiltroAula(e.target.value)}
+              aria-label="Filtrar por aula"
+              className={`${selectCls} mb-3 w-full`}
+            >
+              <option value="">Todas as aulas</option>
+              {aulasDaMateria(filtroMateria).map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.titulo}
+                </option>
+              ))}
+            </select>
+          )}
 
           {lista.length === 0 ? (
             <p className="rounded-lg border border-dashed border-slate-300 px-3 py-6 text-center text-sm text-slate-400">
@@ -368,6 +482,7 @@ export default function Anotacoes() {
             <ul className="space-y-2">
               {lista.map((a) => {
                 const materia = nomeDaMateria(a.materiaId)
+                const aula = tituloDaAula(a.aulaId)
                 return (
                   <li key={a.id}>
                     <button
@@ -385,6 +500,7 @@ export default function Anotacoes() {
                           {a.corpo.trim() && <span className="mt-0.5 block truncate text-xs text-slate-500">{a.corpo}</span>}
                           <span className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-slate-400">
                             {materia && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">{materia}</span>}
+                            {aula && <span className="truncate text-slate-500">{aula}</span>}
                             <span>{tempoRelativo(a.atualizadoEm)}</span>
                           </span>
                         </span>

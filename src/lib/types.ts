@@ -114,6 +114,12 @@ export interface Anotacao {
   userId: string
   /** `null` = anotação solta, ou a matéria dela foi apagada. */
   materiaId: string | null
+  /**
+   * A aula específica, quando a anotação é sobre um ponto e não sobre a
+   * matéria inteira. Cai para nulo se a aula for apagada — reimportar um PDF
+   * troca a aula de id, e a anotação não pode morrer junto.
+   */
+  aulaId: string | null
   titulo: string
   corpo: string
   /** Fixada vai para o topo da lista, acima da ordem por data. */

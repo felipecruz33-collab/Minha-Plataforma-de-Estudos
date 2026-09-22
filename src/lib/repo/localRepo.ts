@@ -465,10 +465,14 @@ export class LocalRepository implements DataRepository {
         isBiblioteca: paraBiblioteca,
       })
     }
+    // Mapa de aula velha -> aula nova, para as anotações reencontrarem a aula
+    // depois da restauração. O id do arquivo é de outro banco.
+    const aulaIdMap = new Map<string, string>()
     for (const a of data.aulas) {
       const newMateriaId = idMap.get(a.materiaId)
       if (!newMateriaId) continue
       const newAulaId = id()
+      aulaIdMap.set(a.id, newAulaId)
       s.aulas.push({
         ...a,
         id: newAulaId,
@@ -493,6 +497,7 @@ export class LocalRepository implements DataRepository {
             // para uma matéria que não veio no arquivo, ela entra solta em vez
             // de apontar para o id antigo — que aqui seria um vínculo quebrado.
             materiaId: a.materiaId ? idMap.get(a.materiaId) ?? null : null,
+            aulaId: a.aulaId ? aulaIdMap.get(a.aulaId) ?? null : null,
           },
         ]
       }
@@ -524,7 +529,7 @@ export class LocalRepository implements DataRepository {
       .sort((a, b) => Number(b.fixada) - Number(a.fixada) || b.atualizadoEm.localeCompare(a.atualizadoEm))
   }
 
-  async criarAnotacao(anotacao: Pick<Anotacao, 'userId' | 'materiaId' | 'titulo' | 'corpo'>): Promise<Anotacao> {
+  async criarAnotacao(anotacao: Pick<Anotacao, 'userId' | 'materiaId' | 'aulaId' | 'titulo' | 'corpo'>): Promise<Anotacao> {
     const s = load()
     const agora = new Date().toISOString()
     const nova: Anotacao = { ...anotacao, id: id(), fixada: false, criadoEm: agora, atualizadoEm: agora }
@@ -535,7 +540,7 @@ export class LocalRepository implements DataRepository {
 
   async salvarAnotacao(
     anotacaoId: string,
-    campos: Partial<Pick<Anotacao, 'materiaId' | 'titulo' | 'corpo' | 'fixada'>>,
+    campos: Partial<Pick<Anotacao, 'materiaId' | 'aulaId' | 'titulo' | 'corpo' | 'fixada'>>,
   ): Promise<Anotacao> {
     const s = load()
     const atual = (s.anotacoes ?? []).find((a) => a.id === anotacaoId)
