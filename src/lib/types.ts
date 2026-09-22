@@ -102,6 +102,26 @@ export interface Simulado {
   criadoEm: string
 }
 
+/**
+ * Uma anotação do estudante — o bloco de notas do aplicativo.
+ *
+ * `materiaId` é opcional de propósito, e continua opcional depois que a
+ * matéria some: o banco solta o vínculo em vez de apagar a anotação (ver a
+ * migração 0019). Texto escrito à mão é a coisa menos reconstituível daqui.
+ */
+export interface Anotacao {
+  id: string
+  userId: string
+  /** `null` = anotação solta, ou a matéria dela foi apagada. */
+  materiaId: string | null
+  titulo: string
+  corpo: string
+  /** Fixada vai para o topo da lista, acima da ordem por data. */
+  fixada: boolean
+  criadoEm: string
+  atualizadoEm: string
+}
+
 export interface ItemCronograma {
   id: string
   materiaId: string | null

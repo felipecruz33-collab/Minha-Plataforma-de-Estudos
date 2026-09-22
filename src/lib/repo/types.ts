@@ -1,4 +1,4 @@
-import type { Aula, AulaImportPayload, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
+import type { Anotacao, Aula, AulaImportPayload, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
 
 export interface MateriaComContagem extends Materia {
   numAulas: number
@@ -21,6 +21,12 @@ export interface BackupData {
   aulas: Aula[]
   respostas: Resposta[]
   perfil: Pick<Perfil, 'favoritos'>
+  /**
+   * Opcional porque backup gerado antes das anotações existirem não tem o
+   * campo — e restaurar um arquivo antigo não pode quebrar por causa disso.
+   * Ausente e vazio querem dizer a mesma coisa aqui: nenhuma anotação.
+   */
+  anotacoes?: Anotacao[]
 }
 
 /**
@@ -217,6 +223,22 @@ export interface DataRepository {
 
   listGeracoes(userId: string): Promise<GeracaoIA[]>
   addGeracao(geracao: Omit<GeracaoIA, 'id' | 'criadoEm'>): Promise<GeracaoIA>
+
+  /** As anotações da pessoa, fixadas primeiro e depois da mais recente para a mais antiga. */
+  listAnotacoes(userId: string): Promise<Anotacao[]>
+  criarAnotacao(anotacao: Pick<Anotacao, 'userId' | 'materiaId' | 'titulo' | 'corpo'>): Promise<Anotacao>
+  /**
+   * Grava o que mudou numa anotação, e carimba `atualizadoEm`.
+   *
+   * Recebe só os campos alterados porque quem chama é o salvamento
+   * automático: mandar a anotação inteira a cada tecla faria a tela sobrepor
+   * um campo com o valor velho que ela ainda tinha em mãos.
+   */
+  salvarAnotacao(
+    anotacaoId: string,
+    campos: Partial<Pick<Anotacao, 'materiaId' | 'titulo' | 'corpo' | 'fixada'>>,
+  ): Promise<Anotacao>
+  excluirAnotacao(anotacaoId: string): Promise<void>
 
   listSimulados(userId: string): Promise<Simulado[]>
   registrarSimulado(simulado: Omit<Simulado, 'id' | 'criadoEm'>): Promise<Simulado>

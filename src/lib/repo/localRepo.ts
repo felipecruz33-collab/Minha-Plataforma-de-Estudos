@@ -1,6 +1,6 @@
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
-import type { Aula, AulaImportPayload, Bloco, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
+import type { Anotacao, Aula, AulaImportPayload, Bloco, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
 import type { AulaBasica, AulaComQuestoes, BackupData, DataRepository, MateriaComContagem, RespostaParaGravar } from './types'
 
 const STORAGE_KEY = 'mpe:v1'
@@ -23,10 +23,11 @@ interface Store {
    * lados — e pra dar como semear um cenário nos testes.
    */
   usoIa: (UsoIA & { userId: string })[]
+  anotacoes: Anotacao[]
 }
 
 function emptyStore(): Store {
-  return { materias: [], aulas: [], respostas: [], perfis: {}, geracoes: [], simulados: [], cronogramas: {}, usoIa: [] }
+  return { materias: [], aulas: [], respostas: [], perfis: {}, geracoes: [], simulados: [], cronogramas: {}, usoIa: [], anotacoes: [] }
 }
 
 function load(): Store {
@@ -428,6 +429,7 @@ export class LocalRepository implements DataRepository {
       aulas,
       respostas,
       perfil: { favoritos: perfil?.favoritos ?? [] },
+      anotacoes: (s.anotacoes ?? []).filter((a) => a.userId === userId),
     }
   }
 
@@ -477,6 +479,24 @@ export class LocalRepository implements DataRepository {
         questoes: a.questoes.map((q, i) => ({ ...q, id: `${newAulaId}:q${i}`, aulaId: newAulaId, materiaId: newMateriaId })),
       })
     }
+    // Anotações só voltam para uma conta pessoal: a biblioteca é conteúdo de
+    // plataforma, e o que alguém escreveu no bloco de notas não pertence a ela.
+    if (!paraBiblioteca) {
+      for (const a of data.anotacoes ?? []) {
+        s.anotacoes = [
+          ...(s.anotacoes ?? []),
+          {
+            ...a,
+            id: id(),
+            userId,
+            // A matéria muda de id ao ser restaurada. Se a anotação apontava
+            // para uma matéria que não veio no arquivo, ela entra solta em vez
+            // de apontar para o id antigo — que aqui seria um vínculo quebrado.
+            materiaId: a.materiaId ? idMap.get(a.materiaId) ?? null : null,
+          },
+        ]
+      }
+    }
     if (s.perfis[userId]) {
       const merged = new Set([...s.perfis[userId].favoritos, ...data.perfil.favoritos])
       s.perfis[userId].favoritos = Array.from(merged)
@@ -495,6 +515,40 @@ export class LocalRepository implements DataRepository {
     s.geracoes.push(nova)
     save(s)
     return nova
+  }
+
+  async listAnotacoes(userId: string): Promise<Anotacao[]> {
+    const s = load()
+    return (s.anotacoes ?? [])
+      .filter((a) => a.userId === userId)
+      .sort((a, b) => Number(b.fixada) - Number(a.fixada) || b.atualizadoEm.localeCompare(a.atualizadoEm))
+  }
+
+  async criarAnotacao(anotacao: Pick<Anotacao, 'userId' | 'materiaId' | 'titulo' | 'corpo'>): Promise<Anotacao> {
+    const s = load()
+    const agora = new Date().toISOString()
+    const nova: Anotacao = { ...anotacao, id: id(), fixada: false, criadoEm: agora, atualizadoEm: agora }
+    s.anotacoes = [...(s.anotacoes ?? []), nova]
+    save(s)
+    return nova
+  }
+
+  async salvarAnotacao(
+    anotacaoId: string,
+    campos: Partial<Pick<Anotacao, 'materiaId' | 'titulo' | 'corpo' | 'fixada'>>,
+  ): Promise<Anotacao> {
+    const s = load()
+    const atual = (s.anotacoes ?? []).find((a) => a.id === anotacaoId)
+    if (!atual) throw new Error('Anotação não encontrada')
+    Object.assign(atual, campos, { atualizadoEm: new Date().toISOString() })
+    save(s)
+    return atual
+  }
+
+  async excluirAnotacao(anotacaoId: string): Promise<void> {
+    const s = load()
+    s.anotacoes = (s.anotacoes ?? []).filter((a) => a.id !== anotacaoId)
+    save(s)
   }
 
   async listSimulados(userId: string): Promise<Simulado[]> {

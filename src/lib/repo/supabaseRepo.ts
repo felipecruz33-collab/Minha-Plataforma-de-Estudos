@@ -1,7 +1,7 @@
 import { supabase } from '../supabaseClient'
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
-import type { Aula, AulaImportPayload, Bloco, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
+import type { Anotacao, Aula, AulaImportPayload, Bloco, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
 import type { AulaBasica, AulaComQuestoes, BackupData, DataRepository, MateriaComContagem, RespostaParaGravar } from './types'
 
 function questaoDaLinha(q: any): Questao {
@@ -27,6 +27,20 @@ function questaoDaLinha(q: any): Questao {
  * que é seu" são reforçadas pelo RLS no banco (ver supabase/README.md);
  * aqui apenas fazemos as chamadas.
  */
+/** Linha do banco -> objeto do aplicativo. */
+function paraAnotacao(a: any): Anotacao {
+  return {
+    id: a.id,
+    userId: a.user_id,
+    materiaId: a.materia_id,
+    titulo: a.titulo,
+    corpo: a.corpo,
+    fixada: a.fixada,
+    criadoEm: a.criado_em,
+    atualizadoEm: a.atualizado_em,
+  }
+}
+
 export class SupabaseRepository implements DataRepository {
   private db() {
     if (!supabase) throw new Error('Supabase não configurado')
@@ -606,6 +620,7 @@ export class SupabaseRepository implements DataRepository {
       aulas,
       respostas,
       perfil: { favoritos: perfil.favoritos },
+      anotacoes: await this.listAnotacoes(userId),
     }
   }
 
@@ -659,6 +674,26 @@ export class SupabaseRepository implements DataRepository {
         )
       }
     }
+
+    // Anotações só voltam para uma conta pessoal: a biblioteca é conteúdo de
+    // plataforma, e o bloco de notas de alguém não pertence a ela.
+    const anotacoes = data.anotacoes ?? []
+    if (!opts.paraBiblioteca && anotacoes.length > 0) {
+      // Esta importação recria matérias POR NOME (é assim que `upsertAula`
+      // trabalha), então o vínculo da anotação também se refaz por nome. O id
+      // que veio no arquivo é de outro banco e não serve para nada aqui.
+      const nomePorIdAntigo = new Map(data.materias.map((m) => [m.id, m.nome]))
+      const idPorNome = new Map((await this.listMaterias(userId)).map((m) => [m.nome, m.id]))
+      const linhas = anotacoes.map((a) => ({
+        user_id: userId,
+        materia_id: a.materiaId ? idPorNome.get(nomePorIdAntigo.get(a.materiaId) ?? '') ?? null : null,
+        titulo: a.titulo,
+        corpo: a.corpo,
+        fixada: a.fixada,
+      }))
+      const { error } = await this.db().from('anotacoes').insert(linhas)
+      if (error) throw error
+    }
   }
 
   async listGeracoes(userId: string): Promise<GeracaoIA[]> {
@@ -703,6 +738,56 @@ export class SupabaseRepository implements DataRepository {
       mensagem: data.mensagem,
       criadoEm: data.criado_em,
     }
+  }
+
+  async listAnotacoes(userId: string): Promise<Anotacao[]> {
+    const { data, error } = await this.db()
+      .from('anotacoes')
+      .select('*')
+      .eq('user_id', userId)
+      // A mesma ordem do índice da migração 0019: fixadas no topo, depois a
+      // edição mais recente.
+      .order('fixada', { ascending: false })
+      .order('atualizado_em', { ascending: false })
+    if (error) throw error
+    return (data ?? []).map(paraAnotacao)
+  }
+
+  async criarAnotacao(anotacao: Pick<Anotacao, 'userId' | 'materiaId' | 'titulo' | 'corpo'>): Promise<Anotacao> {
+    const { data, error } = await this.db()
+      .from('anotacoes')
+      .insert({
+        user_id: anotacao.userId,
+        materia_id: anotacao.materiaId,
+        titulo: anotacao.titulo,
+        corpo: anotacao.corpo,
+      })
+      .select()
+      .single()
+    if (error) throw error
+    return paraAnotacao(data)
+  }
+
+  async salvarAnotacao(
+    anotacaoId: string,
+    campos: Partial<Pick<Anotacao, 'materiaId' | 'titulo' | 'corpo' | 'fixada'>>,
+  ): Promise<Anotacao> {
+    // Só o que veio, e nunca a anotação inteira: quem chama é o salvamento
+    // automático, que conhece um campo por vez.
+    const patch: Record<string, unknown> = { atualizado_em: new Date().toISOString() }
+    if (campos.materiaId !== undefined) patch.materia_id = campos.materiaId
+    if (campos.titulo !== undefined) patch.titulo = campos.titulo
+    if (campos.corpo !== undefined) patch.corpo = campos.corpo
+    if (campos.fixada !== undefined) patch.fixada = campos.fixada
+
+    const { data, error } = await this.db().from('anotacoes').update(patch).eq('id', anotacaoId).select().single()
+    if (error) throw error
+    return paraAnotacao(data)
+  }
+
+  async excluirAnotacao(anotacaoId: string): Promise<void> {
+    const { error } = await this.db().from('anotacoes').delete().eq('id', anotacaoId)
+    if (error) throw error
   }
 
   async listSimulados(userId: string): Promise<Simulado[]> {
