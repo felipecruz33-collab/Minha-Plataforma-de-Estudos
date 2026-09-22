@@ -135,12 +135,12 @@ export class CachedRepository implements DataRepository {
   listAnotacoes(userId: string) {
     return this.ler(`anotacoes:${userId}`, () => this.base.listAnotacoes(userId))
   }
-  criarAnotacao(anotacao: Pick<Anotacao, 'userId' | 'materiaId' | 'titulo' | 'corpo'>) {
+  criarAnotacao(anotacao: Pick<Anotacao, 'userId' | 'materiaId' | 'aulaId' | 'titulo' | 'corpo'>) {
     return this.escrever(() => this.base.criarAnotacao(anotacao))
   }
   salvarAnotacao(
     anotacaoId: string,
-    campos: Partial<Pick<Anotacao, 'materiaId' | 'titulo' | 'corpo' | 'fixada'>>,
+    campos: Partial<Pick<Anotacao, 'materiaId' | 'aulaId' | 'titulo' | 'corpo' | 'fixada'>>,
   ) {
     return this.escrever(() => this.base.salvarAnotacao(anotacaoId, campos))
   }

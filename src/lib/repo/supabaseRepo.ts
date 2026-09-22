@@ -33,6 +33,7 @@ function paraAnotacao(a: any): Anotacao {
     id: a.id,
     userId: a.user_id,
     materiaId: a.materia_id,
+    aulaId: a.aula_id ?? null,
     titulo: a.titulo,
     corpo: a.corpo,
     fixada: a.fixada,
@@ -683,14 +684,36 @@ export class SupabaseRepository implements DataRepository {
       // trabalha), então o vínculo da anotação também se refaz por nome. O id
       // que veio no arquivo é de outro banco e não serve para nada aqui.
       const nomePorIdAntigo = new Map(data.materias.map((m) => [m.id, m.nome]))
-      const idPorNome = new Map((await this.listMaterias(userId)).map((m) => [m.nome, m.id]))
-      const linhas = anotacoes.map((a) => ({
-        user_id: userId,
-        materia_id: a.materiaId ? idPorNome.get(nomePorIdAntigo.get(a.materiaId) ?? '') ?? null : null,
-        titulo: a.titulo,
-        corpo: a.corpo,
-        fixada: a.fixada,
-      }))
+      const materiasAgora = await this.listMaterias(userId)
+      const idPorNome = new Map(materiasAgora.map((m) => [m.nome, m.id]))
+
+      // A aula também mudou de id. Ela se reencontra pela dupla
+      // (matéria nova, título da aula), que é a chave que `upsertAula` acabou
+      // de usar para recriá-la.
+      const tituloPorAulaAntiga = new Map(data.aulas.map((a) => [a.id, a.titulo]))
+      const materiaDaAulaAntiga = new Map(data.aulas.map((a) => [a.id, a.materiaId]))
+      const aulasAgora = await this.listAulasBasicas(materiasAgora.map((m) => m.id))
+      const idPorMateriaETitulo = new Map(aulasAgora.map((a) => [`${a.materiaId}|${a.titulo}`, a.id]))
+
+      const resolverMateria = (materiaIdAntiga: string | null) =>
+        materiaIdAntiga ? idPorNome.get(nomePorIdAntigo.get(materiaIdAntiga) ?? '') ?? null : null
+
+      const linhas = anotacoes.map((a) => {
+        const materiaNova = resolverMateria(a.materiaId)
+        const materiaDaAula = a.aulaId ? resolverMateria(materiaDaAulaAntiga.get(a.aulaId) ?? null) : null
+        const aulaNova =
+          a.aulaId && materiaDaAula
+            ? idPorMateriaETitulo.get(`${materiaDaAula}|${tituloPorAulaAntiga.get(a.aulaId) ?? ''}`) ?? null
+            : null
+        return {
+          user_id: userId,
+          materia_id: materiaNova,
+          aula_id: aulaNova,
+          titulo: a.titulo,
+          corpo: a.corpo,
+          fixada: a.fixada,
+        }
+      })
       const { error } = await this.db().from('anotacoes').insert(linhas)
       if (error) throw error
     }
@@ -753,12 +776,13 @@ export class SupabaseRepository implements DataRepository {
     return (data ?? []).map(paraAnotacao)
   }
 
-  async criarAnotacao(anotacao: Pick<Anotacao, 'userId' | 'materiaId' | 'titulo' | 'corpo'>): Promise<Anotacao> {
+  async criarAnotacao(anotacao: Pick<Anotacao, 'userId' | 'materiaId' | 'aulaId' | 'titulo' | 'corpo'>): Promise<Anotacao> {
     const { data, error } = await this.db()
       .from('anotacoes')
       .insert({
         user_id: anotacao.userId,
         materia_id: anotacao.materiaId,
+        aula_id: anotacao.aulaId,
         titulo: anotacao.titulo,
         corpo: anotacao.corpo,
       })
@@ -770,12 +794,13 @@ export class SupabaseRepository implements DataRepository {
 
   async salvarAnotacao(
     anotacaoId: string,
-    campos: Partial<Pick<Anotacao, 'materiaId' | 'titulo' | 'corpo' | 'fixada'>>,
+    campos: Partial<Pick<Anotacao, 'materiaId' | 'aulaId' | 'titulo' | 'corpo' | 'fixada'>>,
   ): Promise<Anotacao> {
     // Só o que veio, e nunca a anotação inteira: quem chama é o salvamento
     // automático, que conhece um campo por vez.
     const patch: Record<string, unknown> = { atualizado_em: new Date().toISOString() }
     if (campos.materiaId !== undefined) patch.materia_id = campos.materiaId
+    if (campos.aulaId !== undefined) patch.aula_id = campos.aulaId
     if (campos.titulo !== undefined) patch.titulo = campos.titulo
     if (campos.corpo !== undefined) patch.corpo = campos.corpo
     if (campos.fixada !== undefined) patch.fixada = campos.fixada
