@@ -1,5 +1,6 @@
-import { Brain, Check, ChevronDown, ChevronRight, Eye, Layers, PartyPopper, Target } from 'lucide-react'
+import { Brain, Check, ChevronDown, ChevronRight, Clock, Eye, Layers, PartyPopper, Shuffle, Target } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { EmptyState } from '../components/ui/EmptyState'
@@ -16,6 +17,8 @@ import {
   type EstadoCartao,
   type Nota,
 } from '../lib/flashcards'
+import { intercalarPorAssunto } from '../lib/intercalar'
+import { planoDoDia } from '../lib/sessaoDoDia'
 import { useTodasQuestoes } from '../lib/hooks/useTodasQuestoes'
 import { repo } from '../lib/repo'
 import type { Questao, Resposta } from '../lib/types'
@@ -53,6 +56,9 @@ export default function Flashcards() {
   const [virado, setVirado] = useState(false)
   const [feitosAgora, setFeitosAgora] = useState(0)
   const [assuntoAberto, setAssuntoAberto] = useState<string | null>(null)
+  /** `?min=` — o orçamento de tempo que veio da tela inicial, se veio. */
+  const [params] = useSearchParams()
+  const minutos = Number(params.get('min')) || 0
 
   useEffect(() => {
     setNovosPorDia(lerNovosPorDia())
@@ -96,7 +102,17 @@ export default function Flashcards() {
     // Filtra aqui, e não durante a renderização: chamar setIndice no meio do
     // render para pular uma questão apagada é exatamente o caminho do "too
     // many re-renders". A fila sai pronta.
-    const ordem = [...fila.revisar, ...fila.novos].filter((id) => questaoPorId.has(id))
+    let ordem = [...fila.revisar, ...fila.novos].filter((id) => questaoPorId.has(id))
+    // Assuntos intercalados: alternar entre temas treina DISCRIMINAR entre
+    // institutos parecidos, que é o que a prova cobra (Brunmair e Richter,
+    // 2019). Os vencidos continuam na frente dos novos — a intercalação só
+    // evita vizinhos do mesmo tema.
+    ordem = intercalarPorAssunto(ordem, (id) => questaoPorId.get(id)?.tema || '(sem assunto)')
+    // E cortada no tempo que a pessoa disse ter, quando ela disse.
+    if (minutos > 0) {
+      const cabe = planoDoDia(minutos, 0, ordem.length).cartoes
+      ordem = ordem.slice(0, cabe)
+    }
     if (ordem.length === 0) return
     setEmEstudo(ordem)
     setIndice(0)
@@ -144,7 +160,12 @@ export default function Flashcards() {
         <div className="mb-4 flex items-center justify-between gap-2">
           <p className="text-sm text-slate-500">
             Cartão <strong className="text-navy">{indice + 1}</strong> de {emEstudo.length}
-            {questao.tema && <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{questao.tema}</span>}
+            {questao.tema && (
+              <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                <Shuffle className="h-3 w-3 shrink-0 text-slate-400" strokeWidth={2} />
+                {questao.tema}
+              </span>
+            )}
           </p>
           <Button variant="secondary" onClick={() => setEmEstudo(null)} className="px-3 py-1.5 text-xs">
             Encerrar
@@ -260,10 +281,20 @@ export default function Flashcards() {
           </div>
         </div>
 
+        {minutos > 0 && paraHoje > 0 && (
+          <p className="flex flex-wrap items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800">
+            <Clock className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+            <span>
+              Sessão de <strong>{minutos} minutos</strong>: até{' '}
+              <strong>{planoDoDia(minutos, 0, paraHoje).cartoes}</strong> cartões, os mais atrasados primeiro.
+            </span>
+          </p>
+        )}
+
         {paraHoje > 0 && (
           <Button onClick={comecar} className="w-full">
             <Layers className="h-4 w-4" strokeWidth={2} />
-            Estudar agora
+            {minutos > 0 ? `Estudar ${minutos} minutos` : 'Estudar agora'}
           </Button>
         )}
 
