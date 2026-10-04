@@ -9,6 +9,7 @@ import { SeloOrigem } from '../components/ui/SeloOrigem'
 import { useAuth } from '../lib/auth/AuthContext'
 import { contemTodasAsPalavras } from '../lib/buscarTexto'
 import { useCorrecaoAdiada } from '../lib/hooks/useCorrecaoAdiada'
+import { useModoConfianca } from '../lib/hooks/useModoConfianca'
 import { usePaginacao } from '../lib/hooks/usePaginacao'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo, type MateriaComContagem } from '../lib/repo'
@@ -79,6 +80,7 @@ function ultimaRespostaPorQuestao(respostas: Resposta[]): Map<string, Resposta> 
 export default function Questoes() {
   const { user, perfil } = useAuth()
   const correcao = useCorrecaoAdiada(user?.id)
+  const modoConfianca = useModoConfianca(user?.id)
   const [dados, setDados] = useState<Dados | null>(null)
   const [respostas, setRespostas] = useState<Resposta[]>([])
   const [busca, setBusca] = useState('')
@@ -269,6 +271,7 @@ export default function Questoes() {
           // pelo armazenamento do navegador.
           correta: r.alternativaEscolhida === q.gabarito,
           respondidoEm: r.marcadoEm,
+          confianca: r.confianca ?? null,
         })
       }
       await repo.registrarRespostas(paraGravar)
@@ -511,7 +514,12 @@ export default function Questoes() {
             <span className="font-semibold text-navy">Corrigir só quando eu pedir.</span> A alternativa que você marcar
             fica em rascunho e <strong className="text-navy">pode ser trocada</strong> — o gabarito, o comentário e o
             registro da resposta só acontecem quando você mandar corrigir. Dá pra fazer uma sequência inteira sem que
-            uma questão entregue a próxima, e sem que um chute do começo conte contra você.
+            uma questão entregue a próxima, e sem que um chute do começo conte contra você.{' '}
+            <span className="text-slate-500">
+              De quebra, segurar o gabarito por alguns minutos faz a correção render mais: Butler, Karpicke e Roediger
+              (2007) mediram retenção maior com feedback atrasado do que com feedback na hora, porque a resposta errada
+              tem tempo de perder força antes de a certa chegar.
+            </span>
           </span>
         </label>
 
@@ -552,6 +560,25 @@ export default function Questoes() {
           </div>
         )}
         {erroAoCorrigir && <p className="mt-2 text-xs text-rose-600">{erroAoCorrigir}</p>}
+
+        {/* Modo confiança. Fica aqui, na mesma caixa, porque é a outra metade
+            da mesma decisão: como você quer registrar a tentativa. */}
+        <label className="mt-3 flex cursor-pointer items-start gap-2.5 border-t border-slate-200 pt-3">
+          <input
+            type="checkbox"
+            checked={modoConfianca.ativo}
+            onChange={(e) => modoConfianca.setAtivo(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-blue"
+          />
+          <span className="text-xs text-slate-600">
+            <span className="font-semibold text-navy">Dizer o quanto eu tenho certeza.</span> Depois de marcar, você diz
+            se chutou, estava em dúvida ou tinha certeza — um clique a mais por questão, e três coisas em troca:{' '}
+            <strong className="text-navy">acerto chutado para de aumentar o prazo</strong> de revisão (sorte não é
+            memória), <strong className="text-navy">erro cometido com certeza vai para a frente da fila</strong> (é o
+            que mais rende corrigir — Butterfield e Metcalfe mediram isso) e o Desempenho passa a mostrar a sua
+            calibração: o quanto a sua sensação de saber bate com o que você acerta.
+          </span>
+        </label>
       </div>
 
       {/* Discreto de propósito: é uma ação de apagar, e quem não está
@@ -690,15 +717,20 @@ export default function Questoes() {
                   respostaAnterior={respostaPorQuestao.get(q.id) ?? null}
                   onExcluir={podeExcluir(q) ? () => setAExcluir(q) : undefined}
                   rascunho={correcao.rascunhos.get(q.id)?.alternativaEscolhida ?? null}
+                  rascunhoConfianca={correcao.rascunhos.get(q.id)?.confianca ?? null}
                   onMarcarRascunho={
                     correcao.adiada && !temResposta
-                      ? (alternativaEscolhida) =>
+                      ? (alternativaEscolhida, confianca) =>
                           correcao.marcarRascunho({
                             questaoId: q.id,
                             aulaId: q.aulaId,
                             materiaId: q.materiaId,
                             alternativaEscolhida,
-                            marcadoEm: new Date().toISOString(),
+                            // A hora da PRIMEIRA marcação, e não a de agora:
+                            // trocar a alternativa ou a certeza não faz a
+                            // questão mudar de dia no extrato.
+                            marcadoEm: correcao.rascunhos.get(q.id)?.marcadoEm ?? new Date().toISOString(),
+                            confianca: confianca ?? null,
                           })
                       : undefined
                   }

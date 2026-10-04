@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import type { Confianca } from '../types'
 
 /**
  * Correção adiada: marcar agora, corrigir depois — e poder mudar de ideia no
@@ -42,6 +43,15 @@ export interface RascunhoResposta {
    * do mês.
    */
   marcadoEm: string
+  /**
+   * A certeza declarada, quando o modo confiança está ligado.
+   *
+   * Fica no rascunho, e não só na tela, porque a pessoa pode fechar o app no
+   * meio de uma bateria de cinquenta questões. A alternativa sobrevive a isso;
+   * a certeza também tem que sobreviver, senão a bateria inteira é gravada com
+   * confiança em branco.
+   */
+  confianca?: Confianca | null
 }
 
 function ler<T>(chave: string, padrao: T): T {

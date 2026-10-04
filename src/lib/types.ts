@@ -72,6 +72,25 @@ export interface Materia {
   criadoEm: string
 }
 
+/**
+ * O quanto a pessoa tinha certeza ao marcar.
+ *
+ * Opcional (pode ser `null`): quem não liga o modo de confiança responde como
+ * sempre, e toda resposta antiga continua válida.
+ *
+ * Existe porque "acertou" e "errou" escondem duas coisas muito diferentes:
+ *
+ * - ACERTOU CHUTANDO não é memória, é sorte — e subia degrau na escada de
+ *   revisão igual a um acerto de verdade, afastando o prazo de uma questão que
+ *   a pessoa não sabe.
+ * - ERROU COM CERTEZA é a lacuna mais valiosa que existe. Butterfield e
+ *   Metcalfe (2001, 2006) chamam isso de hipercorreção: erro cometido com
+ *   ALTA confiança é mais fácil de corrigir do que erro cometido com baixa
+ *   confiança, porque o choque entre "eu sabia" e "errei" faz a pessoa prestar
+ *   atenção de verdade no gabarito. É o erro que merece a frente da fila.
+ */
+export type Confianca = 'chute' | 'duvida' | 'certeza'
+
 export interface Resposta {
   id: string
   userId: string
@@ -81,6 +100,8 @@ export interface Resposta {
   alternativaEscolhida: string
   correta: boolean
   respondidoEm: string
+  /** `null` quando a pessoa não estava usando o modo de confiança. */
+  confianca: Confianca | null
 }
 
 export interface SimuladoMateria {

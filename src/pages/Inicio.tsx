@@ -1,6 +1,7 @@
 import { BookOpen, Plus, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { SessaoDeHoje } from '../components/SessaoDeHoje'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
@@ -32,6 +33,11 @@ export default function Inicio() {
 
   return (
     <div>
+      {/* Antes de qualquer coisa: o que fazer AGORA com o tempo que existe
+          hoje. É a primeira pergunta de quem abre o app num dia apertado, e
+          deixá-la sem resposta é o que faz a pessoa fechar o app. */}
+      <SessaoDeHoje />
+
       <div className="mb-4 flex items-center justify-between gap-3">
         <p className="text-sm text-slate-500">
           Cada arquivo .json importado vira uma aula dentro da matéria correspondente. Nada é sobrescrito.

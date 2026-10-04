@@ -73,6 +73,8 @@ export default function Revisao() {
   const { questaoPorId, aulaPorId, materiaNomePorId, loading } = useTodasQuestoes()
   const [respostas, setRespostas] = useState<Resposta[] | null>(null)
   const [aberto, setAberto] = useState<string | null>(null)
+  /** Caderno cuja teoria foi aberta — depois de tentar as questões. */
+  const [teoriaAberta, setTeoriaAberta] = useState<string | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -157,8 +159,8 @@ export default function Revisao() {
         <PartyPopper className="h-10 w-10 text-brand-blue" strokeWidth={1.5} />
         <p className="font-semibold text-navy">Nenhum caderno aberto por aqui!</p>
         <p className="max-w-sm text-sm text-slate-400">
-          Cada questão que você errar abre um caderno com a teoria da aula de onde ela veio, para você rever o conteúdo
-          e não só o erro. Continue respondendo questões.
+          Cada questão que você errar abre um caderno: você tenta a questão de novo e, só depois, lê a teoria da aula
+          de onde ela veio. Nessa ordem o texto rende muito mais. Continue respondendo questões.
         </p>
       </Card>
       </div>
@@ -227,21 +229,46 @@ export default function Revisao() {
 
               {estaAberto && (
                 <div className="border-t border-slate-100 px-4 pb-4 pt-3">
-                  <h3 className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400">
-                    <BookOpen className="h-4 w-4 text-brand-blue" strokeWidth={1.75} />
-                    Teoria da aula
-                  </h3>
-                  <TeoriaDaAula aulaId={c.aulaId} />
+                  {/* A QUESTÃO VEM ANTES DA TEORIA, e a ordem aqui é o
+                      conteúdo da tela, não arrumação visual.
 
-                  <h3 className="mb-2 mt-6 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+                      Ler a teoria primeiro e depois responder é reestudo com
+                      a resposta fresca na cabeça: a pessoa acerta, se sente
+                      pronta e não aprendeu quase nada — é a ilusão de
+                      competência que Dunlosky e colegas (2013) classificam
+                      como técnica de BAIXA utilidade (reler, sublinhar).
+                      Tentar recuperar antes, mesmo errando, e só então ler o
+                      texto é prática de recuperação com feedback: a técnica de
+                      ALTA utilidade da mesma revisão. Por isso a teoria desceu
+                      e virou algo que se abre depois de tentar. */}
+                  <h3 className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400">
                     <AlertTriangle className="h-4 w-4 text-amber-500" strokeWidth={1.75} />
-                    O que você errou aqui
+                    Primeiro tente de novo
                   </h3>
+                  <p className="mb-3 text-xs text-slate-400">
+                    Responda antes de ler a teoria, mesmo sem certeza. Tentar e errar prende mais do que reler o texto
+                    com a resposta fresca na cabeça.
+                  </p>
                   <div className="space-y-3">
                     {c.erradas.map((q) => (
                       <QuestionCard key={q.id} questao={q} />
                     ))}
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setTeoriaAberta((atual) => (atual === c.aulaId ? null : c.aulaId))}
+                    aria-expanded={teoriaAberta === c.aulaId}
+                    className="mt-4 flex items-center gap-1.5 text-sm font-semibold text-brand-blue"
+                  >
+                    <BookOpen className="h-4 w-4" strokeWidth={1.75} />
+                    {teoriaAberta === c.aulaId ? 'Esconder a teoria da aula' : 'Agora sim: ver a teoria da aula'}
+                  </button>
+                  {teoriaAberta === c.aulaId && (
+                    <div className="mt-3">
+                      <TeoriaDaAula aulaId={c.aulaId} />
+                    </div>
+                  )}
 
                   <Link
                     to={`/aulas/${c.aulaId}`}
