@@ -1,6 +1,7 @@
 import { supabase } from '../supabaseClient'
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
+import type { EstadoCartao } from '../flashcards'
 import type { Anotacao, Aula, AulaImportPayload, Bloco, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
 import type { AulaBasica, AulaComQuestoes, BackupData, DataRepository, MateriaComContagem, RespostaParaGravar } from './types'
 
@@ -761,6 +762,43 @@ export class SupabaseRepository implements DataRepository {
       mensagem: data.mensagem,
       criadoEm: data.criado_em,
     }
+  }
+
+  async listFlashcards(userId: string): Promise<EstadoCartao[]> {
+    const { data, error } = await this.db().from('flashcards').select('*').eq('user_id', userId)
+    if (error) throw error
+    return (data ?? []).map((f: any) => ({
+      questaoId: f.questao_id,
+      facilidade: f.facilidade,
+      intervaloDias: f.intervalo_dias,
+      repeticoes: f.repeticoes,
+      lapsos: f.lapsos,
+      proximaEm: f.proxima_em,
+      ultimaEm: f.ultima_em,
+    }))
+  }
+
+  async salvarFlashcard(userId: string, estado: EstadoCartao): Promise<EstadoCartao> {
+    // `upsert` pela chave (user_id, questao_id): a primeira nota cria a linha,
+    // as seguintes atualizam. É a mesma restrição única da migração 0021 —
+    // sem ela, duas notas quase simultâneas criariam dois agendamentos.
+    const { error } = await this.db()
+      .from('flashcards')
+      .upsert(
+        {
+          user_id: userId,
+          questao_id: estado.questaoId,
+          facilidade: estado.facilidade,
+          intervalo_dias: estado.intervaloDias,
+          repeticoes: estado.repeticoes,
+          lapsos: estado.lapsos,
+          proxima_em: estado.proximaEm,
+          ultima_em: estado.ultimaEm,
+        },
+        { onConflict: 'user_id,questao_id' },
+      )
+    if (error) throw error
+    return estado
   }
 
   async listAnotacoes(userId: string): Promise<Anotacao[]> {

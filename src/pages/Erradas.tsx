@@ -1,4 +1,4 @@
-import { CalendarClock, CheckCircle2, XCircle } from 'lucide-react'
+import { Brain, CalendarClock, CheckCircle2, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { ControleDaRevisao } from '../components/ControleDaRevisao'
 import { QuestionCard } from '../components/QuestionCard'
@@ -6,6 +6,7 @@ import { CarregarMais } from '../components/ui/CarregarMais'
 import { EmptyState } from '../components/ui/EmptyState'
 import { Tabs } from '../components/ui/Tabs'
 import { useAuth } from '../lib/auth/AuthContext'
+import { assuntosFracos, questoesEmFlashcard } from '../lib/flashcards'
 import { useFiltroMateriaAula } from '../lib/hooks/useFiltroMateriaAula'
 import { useListaVisivel } from '../lib/hooks/useListaVisivel'
 import { useTodasQuestoes } from '../lib/hooks/useTodasQuestoes'
@@ -27,6 +28,12 @@ function Prazo({ estado }: { estado: EstadoRevisao }) {
       {estado.acertosSeguidos > 0 && (
         <span className="text-slate-400">
           · {estado.acertosSeguidos} {estado.acertosSeguidos === 1 ? 'acerto seguido' : 'acertos seguidos'}
+        </span>
+      )}
+      {estado.esticadaPorFlashcard && (
+        <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">
+          <Brain className="h-3 w-3 shrink-0" strokeWidth={2} />
+          prazo esticado: assunto em flashcard
         </span>
       )}
       {estado.dominada && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">dominada</span>}
@@ -54,7 +61,18 @@ export default function Erradas() {
   // Calculado antes de qualquer saída antecipada: um hook não pode ficar
   // depois de um `return`, e o `useMemo` é o que dá à lista uma identidade
   // estável — sem ela o "carregar mais" nunca sairia da primeira página.
-  const estados = useMemo(() => estadosDeRevisao(respostas ?? [], new Date(), perfil?.revisao), [respostas, perfil?.revisao])
+  // Questões cujo assunto já tem baralho de flashcards. Elas voltam com prazo
+  // maior: o conteúdo já está sendo recuperado ativamente no cartão, e repetir
+  // a mesma coisa duas vezes por semana em dois lugares só enche o dia.
+  const comFlashcard = useMemo(
+    () => questoesEmFlashcard(assuntosFracos(respostas ?? [], questaoPorId)),
+    [respostas, questaoPorId],
+  )
+
+  const estados = useMemo(
+    () => estadosDeRevisao(respostas ?? [], new Date(), perfil?.revisao, comFlashcard),
+    [respostas, perfil?.revisao, comFlashcard],
+  )
 
   const todasErradas = useMemo(() => {
     if (!respostas) return []
@@ -128,7 +146,9 @@ export default function Erradas() {
         {abaAtiva === 'hoje' ? (
           <>
             Questão errada volta <strong className="text-navy">amanhã</strong>; a cada acerto seguido o intervalo cresce
-            para 3, 7, 21 e 60 dias. Estas já passaram da hora.
+            para 3, 7, 21 e 60 dias. Se o assunto já tem flashcard, a escada começa um degrau à frente e vai até 120
+            dias — o cartão já cobra a memória, a questão volta para cobrar o formato da prova. Estas já passaram da
+            hora.
           </>
         ) : (
           <>

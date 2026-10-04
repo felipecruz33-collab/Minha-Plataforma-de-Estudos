@@ -1,3 +1,4 @@
+import type { EstadoCartao } from '../flashcards'
 import { ordenarAulas } from '../ordenarAulas'
 import { primeiraDataPorArquivo } from './primeiraDataPorArquivo'
 import type { Anotacao, Aula, AulaImportPayload, Bloco, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
@@ -24,10 +25,11 @@ interface Store {
    */
   usoIa: (UsoIA & { userId: string })[]
   anotacoes: Anotacao[]
+  flashcards: (EstadoCartao & { userId: string })[]
 }
 
 function emptyStore(): Store {
-  return { materias: [], aulas: [], respostas: [], perfis: {}, geracoes: [], simulados: [], cronogramas: {}, usoIa: [], anotacoes: [] }
+  return { materias: [], aulas: [], respostas: [], perfis: {}, geracoes: [], simulados: [], cronogramas: {}, usoIa: [], anotacoes: [], flashcards: [] }
 }
 
 function load(): Store {
@@ -520,6 +522,21 @@ export class LocalRepository implements DataRepository {
     s.geracoes.push(nova)
     save(s)
     return nova
+  }
+
+  async listFlashcards(userId: string): Promise<EstadoCartao[]> {
+    const s = load()
+    return (s.flashcards ?? []).filter((f) => f.userId === userId).map(({ userId: _, ...resto }) => resto)
+  }
+
+  async salvarFlashcard(userId: string, estado: EstadoCartao): Promise<EstadoCartao> {
+    const s = load()
+    s.flashcards = s.flashcards ?? []
+    const i = s.flashcards.findIndex((f) => f.userId === userId && f.questaoId === estado.questaoId)
+    if (i >= 0) s.flashcards[i] = { ...estado, userId }
+    else s.flashcards.push({ ...estado, userId })
+    save(s)
+    return estado
   }
 
   async listAnotacoes(userId: string): Promise<Anotacao[]> {

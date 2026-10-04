@@ -7,6 +7,7 @@ import { Card } from '../components/ui/Card'
 import { CarregarMais } from '../components/ui/CarregarMais'
 import { ContentBlock } from '../components/ui/ContentBlock'
 import { useAuth } from '../lib/auth/AuthContext'
+import { assuntosFracos, questoesEmFlashcard } from '../lib/flashcards'
 import { useListaVisivel } from '../lib/hooks/useListaVisivel'
 import { useTodasQuestoes } from '../lib/hooks/useTodasQuestoes'
 import { repo } from '../lib/repo'
@@ -78,7 +79,18 @@ export default function Revisao() {
     repo.listRespostas(user.id).then(setRespostas)
   }, [user])
 
-  const estados = useMemo(() => estadosDeRevisao(respostas ?? [], new Date(), perfil?.revisao), [respostas, perfil?.revisao])
+  // Mesma régua da aba de Questões erradas: assunto com baralho usa a escada
+  // esticada. Sem isto, as duas telas diriam prazos diferentes para a mesma
+  // questão, e é a contradição que faz a pessoa desconfiar do resto.
+  const comFlashcard = useMemo(
+    () => questoesEmFlashcard(assuntosFracos(respostas ?? [], questaoPorId)),
+    [respostas, questaoPorId],
+  )
+
+  const estados = useMemo(
+    () => estadosDeRevisao(respostas ?? [], new Date(), perfil?.revisao, comFlashcard),
+    [respostas, perfil?.revisao, comFlashcard],
+  )
 
   /**
    * Um caderno por AULA, e não por assunto, porque é na aula que mora a
