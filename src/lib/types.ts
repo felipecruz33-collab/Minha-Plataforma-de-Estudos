@@ -172,6 +172,16 @@ export interface ItemCronograma {
    * semanas continua mostrando o tamanho real do atraso.
    */
   veioDaSemana?: number
+  /**
+   * A tarefa é uma REVISÃO de uma aula estudada antes, e não a primeira
+   * passada por ela.
+   *
+   * Opcional, e `semanas` é `jsonb`: cronograma gerado antes disto continua
+   * valendo, só não tem revisões marcadas. Guarda também a semana de origem,
+   * para a tela poder dizer "revisão da semana 2" — a distância é a
+   * informação que faz a tarefa parecer necessária em vez de repetida.
+   */
+  revisaoDaSemana?: number
 }
 
 export interface SemanaCronograma {

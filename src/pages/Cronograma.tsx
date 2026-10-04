@@ -1,4 +1,4 @@
-import { ArrowRightLeft, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronUp, Circle, PencilLine, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowRightLeft, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronUp, Circle, PencilLine, Plus, RefreshCw, Repeat, Sparkles, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
@@ -292,7 +292,7 @@ export default function CronogramaPage() {
           </div>
           <p className="-mt-2 text-xs text-slate-400">
             {modo === 'automatico'
-              ? 'Escolha as matérias e o prazo — as aulas são distribuídas pelas semanas automaticamente, com uma semana de revisão geral no final.'
+              ? 'Escolha as matérias e o prazo — as aulas são distribuídas pelas semanas automaticamente, e cada aula volta para revisão uma e três semanas depois de estudada. A semana fica mais cheia por isso: revisar faz parte do plano, não é um extra empilhado no fim. Rever em bloco na última semana é a forma que rende menos.'
               : 'As semanas ficam vazias — você preenche o que vai estudar em cada uma, semana a semana, no seu ritmo.'}
           </p>
 
@@ -565,6 +565,16 @@ export default function CronogramaPage() {
                                   <SeloOrigem
                                     isBiblioteca={!!materiasDisponiveis.find((m) => m.id === item.materiaId)?.isBiblioteca}
                                   />
+                                )}
+                                {item.revisaoDaSemana !== undefined && (
+                                  // A distância é a informação: "revisão da
+                                  // semana 2" explica por que a tarefa não é
+                                  // repetição — passou tempo, e é justamente
+                                  // o tempo que faz a revisão valer.
+                                  <span className="flex items-center gap-1 font-medium text-brand-blue">
+                                    <Repeat className="h-3 w-3" strokeWidth={2} />
+                                    revisão da semana {item.revisaoDaSemana}
+                                  </span>
                                 )}
                                 {item.veioDaSemana !== undefined && (
                                   <span className="flex items-center gap-1 font-medium text-amber-600">
