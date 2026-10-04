@@ -52,6 +52,28 @@ export const ESCADA_DIAS = [1, 3, 7, 21, 60] as const
  */
 export const ESCADA_DIAS_COM_FLASHCARD = [3, 7, 21, 60, 120] as const
 
+/**
+ * UM ACERTO POR DIA, e não um acerto por clique.
+ *
+ * Refazer a mesma questão três vezes na mesma noite não vale três degraus da
+ * escada, e isto não é opinião: Rawson e Dunlosky (2011, 2013) mediram as duas
+ * coisas lado a lado. Quem recuperou cada item CERTO UMA VEZ EM CADA DE TRÊS
+ * SESSÕES ESPAÇADAS lembrou mais do que o DOBRO de quem acertou o mesmo item
+ * três vezes dentro de uma sessão só. É o mesmo esforço com resultado
+ * diferente — o que consolida é o intervalo entre as recuperações, não a
+ * quantidade delas.
+ *
+ * Antes daqui a escada contava clique: três acertos seguidos na mesma noite
+ * jogavam a questão para 21 dias como se ela tivesse sido recuperada em três
+ * dias diferentes. O prazo ficava grande sem a memória ter ficado forte — que
+ * é o pior dos dois mundos, porque a questão só volta quando já foi esquecida.
+ *
+ * Errar continua valendo na hora, sempre: um erro é informação nova no
+ * instante em que acontece, e zerar o degrau na hora é o que o ciclo existe
+ * para fazer.
+ */
+const UM_ACERTO_POR_DIA = true
+
 /** A partir daqui a questão é considerada dominada (último degrau da escada). */
 export const ACERTOS_PARA_DOMINAR = ESCADA_DIAS.length - 1
 
@@ -80,6 +102,13 @@ export interface EstadoRevisao {
   ultimaCorreta: boolean
   /** Quantas vezes a questão já foi respondida. */
   tentativas: number
+  /**
+   * Acertos que NÃO contaram porque foram repetição no mesmo dia.
+   *
+   * Serve para a tela avisar em vez de parecer que perdeu o acerto da pessoa —
+   * ver `UM_ACERTO_POR_DIA`.
+   */
+  acertosNoMesmoDia: number
   /** Dias de espera do degrau atual. */
   intervaloDias: number
   /** Dia (YYYY-MM-DD) em que a questão volta. */
@@ -137,11 +166,24 @@ export function estadosDeRevisao(
 
     let errouAlgumaVez = false
     let acertosSeguidos = 0
+    /** Dia do último acerto que CONTOU — ver `UM_ACERTO_POR_DIA`. */
+    let diaDoUltimoAcertoContado: string | null = null
+    /** Acertos repetidos no mesmo dia, só para a tela poder explicar. */
+    let acertosNoMesmoDia = 0
     for (const r of emOrdem) {
-      if (r.correta) acertosSeguidos += 1
-      else {
+      if (r.correta) {
+        const dia = diaDe(r.respondidoEm)
+        if (UM_ACERTO_POR_DIA && dia === diaDoUltimoAcertoContado) {
+          acertosNoMesmoDia += 1
+          continue
+        }
+        acertosSeguidos += 1
+        diaDoUltimoAcertoContado = dia
+      } else {
         errouAlgumaVez = true
         acertosSeguidos = 0
+        diaDoUltimoAcertoContado = null
+        acertosNoMesmoDia = 0
       }
     }
     if (!errouAlgumaVez) continue
@@ -167,6 +209,7 @@ export function estadosDeRevisao(
       acertosSeguidos,
       ultimaCorreta: ultima.correta,
       tentativas: emOrdem.length,
+      acertosNoMesmoDia,
       intervaloDias,
       voltaEm,
       diasAteVoltar,

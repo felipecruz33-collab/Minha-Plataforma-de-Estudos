@@ -511,7 +511,12 @@ export default function Questoes() {
             <span className="font-semibold text-navy">Corrigir só quando eu pedir.</span> A alternativa que você marcar
             fica em rascunho e <strong className="text-navy">pode ser trocada</strong> — o gabarito, o comentário e o
             registro da resposta só acontecem quando você mandar corrigir. Dá pra fazer uma sequência inteira sem que
-            uma questão entregue a próxima, e sem que um chute do começo conte contra você.
+            uma questão entregue a próxima, e sem que um chute do começo conte contra você.{' '}
+            <span className="text-slate-500">
+              De quebra, segurar o gabarito por alguns minutos faz a correção render mais: Butler, Karpicke e Roediger
+              (2007) mediram retenção maior com feedback atrasado do que com feedback na hora, porque a resposta errada
+              tem tempo de perder força antes de a certa chegar.
+            </span>
           </span>
         </label>
 

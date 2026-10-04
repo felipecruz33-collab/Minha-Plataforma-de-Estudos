@@ -30,6 +30,15 @@ function Prazo({ estado }: { estado: EstadoRevisao }) {
           · {estado.acertosSeguidos} {estado.acertosSeguidos === 1 ? 'acerto seguido' : 'acertos seguidos'}
         </span>
       )}
+      {estado.acertosNoMesmoDia > 0 && (
+        // Sem este aviso parece que o app comeu os acertos da pessoa.
+        <span
+          className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500"
+          title="Acertar de novo no mesmo dia não aumenta o prazo: o que fortalece a memória é o intervalo entre as recuperações, não a quantidade delas no mesmo dia."
+        >
+          +{estado.acertosNoMesmoDia} no mesmo dia (conta amanhã)
+        </span>
+      )}
       {estado.esticadaPorFlashcard && (
         <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">
           <Brain className="h-3 w-3 shrink-0" strokeWidth={2} />
