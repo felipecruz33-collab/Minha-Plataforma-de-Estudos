@@ -1,3 +1,4 @@
+import type { EstadoCartao } from '../flashcards'
 import type { Anotacao, Aula, AulaImportPayload, Cronograma, EstadoDoCicloRevisao, GeracaoIA, Materia, Perfil, Questao, Resposta, Simulado, UsoIA } from '../types'
 
 export interface MateriaComContagem extends Materia {
@@ -223,6 +224,18 @@ export interface DataRepository {
 
   listGeracoes(userId: string): Promise<GeracaoIA[]>
   addGeracao(geracao: Omit<GeracaoIA, 'id' | 'criadoEm'>): Promise<GeracaoIA>
+
+  /**
+   * O estado SM-2 de cada flashcard da pessoa.
+   *
+   * Só os cartões que ela já respondeu alguma vez têm linha: cartão novo é
+   * uma questão errada que ainda não foi vista, e isso se descobre comparando
+   * com a lista de assuntos fracos — não precisa de linha no banco para
+   * existir.
+   */
+  listFlashcards(userId: string): Promise<EstadoCartao[]>
+  /** Grava o estado do cartão depois de uma nota; cria a linha se for a primeira vez. */
+  salvarFlashcard(userId: string, estado: EstadoCartao): Promise<EstadoCartao>
 
   /** As anotações da pessoa, fixadas primeiro e depois da mais recente para a mais antiga. */
   listAnotacoes(userId: string): Promise<Anotacao[]>

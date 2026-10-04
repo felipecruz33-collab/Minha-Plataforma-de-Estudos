@@ -1,3 +1,4 @@
+import type { EstadoCartao } from '../flashcards'
 import type { Anotacao, Aula, AulaImportPayload, Cronograma, GeracaoIA, Materia, Perfil, Resposta, Simulado } from '../types'
 import type { AulaComQuestoes, BackupData, DataRepository, MateriaComContagem, RespostaParaGravar } from './types'
 
@@ -131,6 +132,12 @@ export class CachedRepository implements DataRepository {
   }
   listGeracoes(userId: string) {
     return this.ler(`geracoes:${userId}`, () => this.base.listGeracoes(userId))
+  }
+  listFlashcards(userId: string) {
+    return this.ler(`flashcards:${userId}`, () => this.base.listFlashcards(userId))
+  }
+  salvarFlashcard(userId: string, estado: EstadoCartao) {
+    return this.escrever(() => this.base.salvarFlashcard(userId, estado))
   }
   listAnotacoes(userId: string) {
     return this.ler(`anotacoes:${userId}`, () => this.base.listAnotacoes(userId))

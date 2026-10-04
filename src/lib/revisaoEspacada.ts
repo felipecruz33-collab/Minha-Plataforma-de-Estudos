@@ -29,6 +29,29 @@ import type { EstadoDoCicloRevisao, Resposta } from './types'
  */
 export const ESCADA_DIAS = [1, 3, 7, 21, 60] as const
 
+/**
+ * A escada ESTICADA, usada quando o assunto da questão já está sendo treinado
+ * em flashcard.
+ *
+ * O motivo é evitar trabalho em dobro sobre o mesmo conteúdo. Quem tem um
+ * baralho de "Metas fiscais" já recupera aquilo ativamente a cada poucos
+ * dias; a questão não precisa voltar com a mesma pressa — o papel dela passa
+ * a ser outro, o de cobrar no FORMATO DA PROVA, com alternativas e pegadinha,
+ * e isso rende espaçado.
+ *
+ * Os números não são chute. A meta-análise de Cepeda e colegas (2006, 254
+ * estudos) encontra que o intervalo ótimo fica em torno de 10 a 20% do tempo
+ * que você precisa reter a informação. Para um concurso daqui a seis meses a
+ * um ano (180 a 365 dias), isso dá algo entre 18 e 73 dias — faixa que os
+ * degraus de cima desta escada ocupam e que a escada normal, parando em 60,
+ * mal encosta.
+ *
+ * Cada degrau é o seguinte da escada normal, com um topo novo: a questão
+ * entra um passo à frente porque o flashcard já cobriu o passo que ela
+ * pularia.
+ */
+export const ESCADA_DIAS_COM_FLASHCARD = [3, 7, 21, 60, 120] as const
+
 /** A partir daqui a questão é considerada dominada (último degrau da escada). */
 export const ACERTOS_PARA_DOMINAR = ESCADA_DIAS.length - 1
 
@@ -67,6 +90,8 @@ export interface EstadoRevisao {
   vencida: boolean
   /** O ciclo inteiro está pausado — o prazo desta questão está congelado. */
   pausada: boolean
+  /** O prazo foi esticado porque o assunto já está em flashcard. */
+  esticadaPorFlashcard: boolean
   /** Chegou ao último degrau da escada. */
   dominada: boolean
 }
@@ -82,6 +107,15 @@ export function estadosDeRevisao(
   respostas: Resposta[],
   hoje = new Date(),
   ciclo?: EstadoDoCicloRevisao | null,
+  /**
+   * Questões cujo assunto já tem baralho de flashcards. Elas usam a escada
+   * esticada — ver `ESCADA_DIAS_COM_FLASHCARD`.
+   *
+   * Vem pronto de fora, por questão e não por assunto, porque `Resposta` não
+   * carrega o tema: quem sabe o assunto de cada questão é a tela, que tem o
+   * acervo em mãos.
+   */
+  questoesComFlashcard?: Set<string>,
 ): Map<string, EstadoRevisao> {
   const porQuestao = new Map<string, Resposta[]>()
   for (const r of respostas) {
@@ -113,8 +147,9 @@ export function estadosDeRevisao(
     if (!errouAlgumaVez) continue
 
     const ultima = emOrdem[emOrdem.length - 1]
-    const degrau = Math.min(acertosSeguidos, ESCADA_DIAS.length - 1)
-    const intervaloDias = ESCADA_DIAS[degrau]
+    const escada = questoesComFlashcard?.has(questaoId) ? ESCADA_DIAS_COM_FLASHCARD : ESCADA_DIAS
+    const degrau = Math.min(acertosSeguidos, escada.length - 1)
+    const intervaloDias = escada[degrau]
     // PAUSA: quem parou não volta para um muro de atraso. Uma resposta anterior
     // à retomada conta como se tivesse sido dada NO DIA da volta — o prazo
     // recomeça dali, e o degrau da escada que a pessoa já tinha conquistado é
@@ -139,6 +174,7 @@ export function estadosDeRevisao(
       // motivo de existir o botão.
       vencida: !ciclo?.pausadaEm && diasAteVoltar <= 0,
       pausada: !!ciclo?.pausadaEm,
+      esticadaPorFlashcard: !!questoesComFlashcard?.has(questaoId),
       dominada: acertosSeguidos >= ACERTOS_PARA_DOMINAR,
     })
   }

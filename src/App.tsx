@@ -11,6 +11,7 @@ import Cronograma from './pages/Cronograma'
 import Desempenho from './pages/Desempenho'
 import Erradas from './pages/Erradas'
 import Favoritos from './pages/Favoritos'
+import Flashcards from './pages/Flashcards'
 import Geracoes from './pages/Geracoes'
 import Inicio from './pages/Inicio'
 import Login from './pages/Login'
@@ -67,6 +68,7 @@ function AppRoutes() {
         <Route path="/favoritos" element={<Favoritos />} />
         <Route path="/erradas" element={<Erradas />} />
         <Route path="/revisao" element={<Revisao />} />
+        <Route path="/flashcards" element={<Flashcards />} />
         <Route path="/anotacoes" element={<Anotacoes />} />
         <Route path="/backup" element={<Backup />} />
         <Route path="/geracoes" element={<Geracoes />} />
