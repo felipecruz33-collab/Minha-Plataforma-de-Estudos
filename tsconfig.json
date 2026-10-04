@@ -16,9 +16,13 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
     "types": [],
-    "baseUrl": ".",
+    // Sem `baseUrl`: ele está deprecado a partir do TypeScript 5.5 e fazia o
+    // `tsc --noEmit` sair com erro (TS5101). Desde o TS 4.1 o `paths` dispensa
+    // o `baseUrl` — os caminhos passam a ser relativos a ESTE arquivo, e o
+    // apelido continua funcionando igual (o Vite tem o mesmo apelido no
+    // `vite.config.ts`).
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src"]
