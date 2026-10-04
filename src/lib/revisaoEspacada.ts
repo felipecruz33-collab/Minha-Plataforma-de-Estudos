@@ -74,6 +74,25 @@ export const ESCADA_DIAS_COM_FLASHCARD = [3, 7, 21, 60, 120] as const
  */
 const UM_ACERTO_POR_DIA = true
 
+/**
+ * ACERTO CHUTADO NÃO SOBE DEGRAU.
+ *
+ * Quando a pessoa usa o modo confiança e marca "Chutei", o acerto não é
+ * recuperação de memória — é sorte. Antes disto ele subia degrau igual a um
+ * acerto de verdade, e o prazo da questão crescia por sorte: a questão que a
+ * pessoa menos sabe passava a voltar mais tarde, exatamente ao contrário do
+ * que o ciclo existe para fazer.
+ *
+ * O acerto chutado também não ZERA nada — ele não é um erro. Simplesmente não
+ * conta: a questão fica no degrau em que estava e volta no mesmo prazo.
+ *
+ * Resposta sem confiança declarada (modo desligado, ou tudo que foi respondido
+ * antes dele existir) conta como sempre contou.
+ */
+function acertoQueConta(r: Resposta): boolean {
+  return r.correta && r.confianca !== 'chute'
+}
+
 /** A partir daqui a questão é considerada dominada (último degrau da escada). */
 export const ACERTOS_PARA_DOMINAR = ESCADA_DIAS.length - 1
 
@@ -109,6 +128,15 @@ export interface EstadoRevisao {
    * ver `UM_ACERTO_POR_DIA`.
    */
   acertosNoMesmoDia: number
+  /** Acertos chutados desde o último erro — não sobem degrau. */
+  acertosChutados: number
+  /**
+   * O último erro desta questão foi cometido com CERTEZA declarada.
+   *
+   * É a lacuna que mais rende atacar (hipercorreção — Butterfield e Metcalfe),
+   * e por isso ela vai para a frente da fila.
+   */
+  erroComCerteza: boolean
   /** Dias de espera do degrau atual. */
   intervaloDias: number
   /** Dia (YYYY-MM-DD) em que a questão volta. */
@@ -170,8 +198,15 @@ export function estadosDeRevisao(
     let diaDoUltimoAcertoContado: string | null = null
     /** Acertos repetidos no mesmo dia, só para a tela poder explicar. */
     let acertosNoMesmoDia = 0
+    let acertosChutados = 0
+    let ultimoErroComCerteza = false
     for (const r of emOrdem) {
       if (r.correta) {
+        // Chute certo: não sobe e não zera — nem ocupa a vaga do dia.
+        if (!acertoQueConta(r)) {
+          acertosChutados += 1
+          continue
+        }
         const dia = diaDe(r.respondidoEm)
         if (UM_ACERTO_POR_DIA && dia === diaDoUltimoAcertoContado) {
           acertosNoMesmoDia += 1
@@ -184,6 +219,8 @@ export function estadosDeRevisao(
         acertosSeguidos = 0
         diaDoUltimoAcertoContado = null
         acertosNoMesmoDia = 0
+        acertosChutados = 0
+        ultimoErroComCerteza = r.confianca === 'certeza'
       }
     }
     if (!errouAlgumaVez) continue
@@ -210,6 +247,8 @@ export function estadosDeRevisao(
       ultimaCorreta: ultima.correta,
       tentativas: emOrdem.length,
       acertosNoMesmoDia,
+      acertosChutados,
+      erroComCerteza: ultimoErroComCerteza && acertosSeguidos === 0,
       intervaloDias,
       voltaEm,
       diasAteVoltar,
@@ -225,11 +264,26 @@ export function estadosDeRevisao(
   return estados
 }
 
-/** Ids das questões que já passaram da hora, das mais atrasadas para as menos. */
+/**
+ * Ids das questões que já passaram da hora, na ordem em que vale atacá-las.
+ *
+ * O ERRO COM CERTEZA vem primeiro, antes até do mais atrasado. Butterfield e
+ * Metcalfe (2001, 2006) mediram que o erro cometido com alta confiança é mais
+ * fácil de corrigir do que o cometido com baixa confiança: o choque entre "eu
+ * sabia" e "errei" faz a pessoa prestar atenção de verdade no gabarito. Numa
+ * fila que a pessoa talvez não termine hoje, é o que tem que estar no topo.
+ *
+ * Depois dele, o mais atrasado — que é o mais perto de ser esquecido.
+ */
 export function vencidasPrimeiro(estados: Map<string, EstadoRevisao>): EstadoRevisao[] {
   return Array.from(estados.values())
     .filter((e) => e.vencida)
-    .sort((a, b) => a.diasAteVoltar - b.diasAteVoltar || a.ultimaEm.localeCompare(b.ultimaEm))
+    .sort(
+      (a, b) =>
+        Number(b.erroComCerteza) - Number(a.erroComCerteza) ||
+        a.diasAteVoltar - b.diasAteVoltar ||
+        a.ultimaEm.localeCompare(b.ultimaEm),
+    )
 }
 
 /** "hoje", "amanhã", "em 5 dias", "atrasada há 3 dias" — texto pronto pra tela. */

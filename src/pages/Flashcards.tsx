@@ -310,6 +310,16 @@ export default function Flashcards() {
                     <span className="block font-semibold text-navy">{a.tema}</span>
                     <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                       <span className="font-semibold text-rose-600">{a.erros} erros</span>
+                      {a.errosComCerteza > 0 && (
+                        <span className="font-semibold text-rose-700" title="Erro cometido com certeza declarada — é o que mais rende corrigir, e por isso esses cartões entram primeiro.">
+                          {a.errosComCerteza} com certeza
+                        </span>
+                      )}
+                      {a.acertosChutados > 0 && (
+                        <span className="text-slate-500" title="Acertos que você marcou como chute: sorte, não conhecimento. O assunto continua frágil.">
+                          {a.acertosChutados} {a.acertosChutados === 1 ? 'acerto chutado' : 'acertos chutados'}
+                        </span>
+                      )}
                       <span className="text-slate-400">{a.pct}% de aproveitamento</span>
                       <span className="text-slate-400">
                         {cartoes.length} {cartoes.length === 1 ? 'cartão' : 'cartões'}

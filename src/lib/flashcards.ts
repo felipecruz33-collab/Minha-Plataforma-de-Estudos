@@ -56,8 +56,19 @@ export interface AssuntoFraco {
   tentativas: number
   /** Aproveitamento em %, para ordenar o que está pior. */
   pct: number
-  /** Questões deste assunto que a pessoa já errou alguma vez. */
+  /**
+   * Questões deste assunto que a pessoa já errou alguma vez.
+   *
+   * Na ordem de prioridade: primeiro as que ela errou tendo CERTEZA (o erro
+   * que mais rende corrigir — hipercorreção), depois as demais. A ordem
+   * importa porque é ela que decide quais cartões entram quando o teto de
+   * novos do dia corta a lista.
+   */
   questaoIds: string[]
+  /** Erros cometidos com certeza declarada — a lacuna mais valiosa do assunto. */
+  errosComCerteza: number
+  /** Acertos que foram chute declarado: sorte, não conhecimento. */
+  acertosChutados: number
 }
 
 /**
@@ -67,7 +78,16 @@ export interface AssuntoFraco {
  * mudar a régua amanhã não deixa nenhum dado velho errado.
  */
 export function assuntosFracos(respostas: Resposta[], questaoPorId: Map<string, Questao>): AssuntoFraco[] {
-  const porTema = new Map<string, { erros: number; tentativas: number; erradas: Set<string> }>()
+  interface Acumulado {
+    erros: number
+    tentativas: number
+    erradas: Set<string>
+    /** Questões erradas COM certeza declarada — vão para a frente da fila. */
+    comCerteza: Set<string>
+    errosComCerteza: number
+    acertosChutados: number
+  }
+  const porTema = new Map<string, Acumulado>()
 
   for (const r of respostas) {
     const questao = questaoPorId.get(r.questaoId)
@@ -76,11 +96,21 @@ export function assuntosFracos(respostas: Resposta[], questaoPorId: Map<string, 
     const tema = questao?.tema?.trim()
     if (!tema) continue
 
-    const atual = porTema.get(tema) ?? { erros: 0, tentativas: 0, erradas: new Set<string>() }
+    const atual: Acumulado =
+      porTema.get(tema) ??
+      { erros: 0, tentativas: 0, erradas: new Set(), comCerteza: new Set(), errosComCerteza: 0, acertosChutados: 0 }
     atual.tentativas += 1
     if (!r.correta) {
       atual.erros += 1
       atual.erradas.add(r.questaoId)
+      if (r.confianca === 'certeza') {
+        atual.errosComCerteza += 1
+        atual.comCerteza.add(r.questaoId)
+      }
+    } else if (r.confianca === 'chute') {
+      // Acerto por sorte não tira o assunto da lista — pelo contrário, é
+      // sinal de que ele continua frágil.
+      atual.acertosChutados += 1
     }
     porTema.set(tema, atual)
   }
@@ -92,7 +122,13 @@ export function assuntosFracos(respostas: Resposta[], questaoPorId: Map<string, 
       erros: v.erros,
       tentativas: v.tentativas,
       pct: v.tentativas ? Math.round(((v.tentativas - v.erros) / v.tentativas) * 100) : 0,
-      questaoIds: Array.from(v.erradas),
+      // Erro com certeza primeiro: é o cartão que entra quando o teto de
+      // novos do dia só deixa passar dois ou três.
+      questaoIds: Array.from(v.erradas).sort(
+        (a, b) => Number(v.comCerteza.has(b)) - Number(v.comCerteza.has(a)),
+      ),
+      errosComCerteza: v.errosComCerteza,
+      acertosChutados: v.acertosChutados,
     }))
     // O pior aproveitamento primeiro; empatou, quem errou mais vezes.
     .sort((a, b) => a.pct - b.pct || b.erros - a.erros)

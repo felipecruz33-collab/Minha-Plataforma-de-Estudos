@@ -384,6 +384,7 @@ export class SupabaseRepository implements DataRepository {
           alternativaEscolhida: r.alternativa_escolhida,
           correta: r.correta,
           respondidoEm: r.respondido_em,
+          confianca: r.confianca ?? null,
         }) as Resposta,
     )
   }
@@ -405,6 +406,7 @@ export class SupabaseRepository implements DataRepository {
           materia_id: r.materiaId,
           alternativa_escolhida: r.alternativaEscolhida,
           correta: r.correta,
+          confianca: r.confianca ?? null,
           // Só quando a tela sabe a hora certa. Sem isto o banco carimba
           // `now()`, que é o certo para quem responde e vê o resultado na hora.
           ...(r.respondidoEm ? { respondido_em: r.respondidoEm } : {}),
@@ -421,6 +423,7 @@ export class SupabaseRepository implements DataRepository {
       alternativaEscolhida: d.alternativa_escolhida,
       correta: d.correta,
       respondidoEm: d.respondido_em,
+      confianca: d.confianca ?? null,
     }))
   }
 

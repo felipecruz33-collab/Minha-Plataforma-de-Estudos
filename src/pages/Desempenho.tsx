@@ -1,4 +1,4 @@
-import { BarChart3, CalendarRange, Minus, TrendingDown, TrendingUp } from 'lucide-react'
+import { BarChart3, CalendarRange, Gauge, Minus, TrendingDown, TrendingUp } from 'lucide-react'
 import { useMemo, useEffect, useState } from 'react'
 import { Card } from '../components/ui/Card'
 import { CarregarMais } from '../components/ui/CarregarMais'
@@ -11,6 +11,7 @@ import {
   type EventoExtrato,
   type ProjecaoMateria,
 } from '../lib/acompanhamento'
+import { calibracao, CERTEZA_ESPERADA } from '../lib/calibracao'
 import { useListaVisivel } from '../lib/hooks/useListaVisivel'
 import { useTodasQuestoes } from '../lib/hooks/useTodasQuestoes'
 import { repo } from '../lib/repo'
@@ -37,6 +38,91 @@ function Barra({ grupo }: { grupo: Grupo }) {
         <div className={`h-full rounded-full ${cor}`} style={{ width: `${pct}%` }} />
       </div>
     </div>
+  )
+}
+
+/**
+ * Calibração: o cruzamento entre o que a pessoa SENTIA e o que ela acertou.
+ *
+ * Só aparece para quem usa o modo confiança — sem a declaração não existe
+ * nada para cruzar, e uma caixa vazia prometendo diagnóstico é pior do que
+ * caixa nenhuma.
+ */
+function PainelCalibracao({ respostas }: { respostas: Resposta[] }) {
+  const dados = useMemo(() => calibracao(respostas), [respostas])
+  if (dados.comConfianca === 0) return null
+
+  return (
+    <section>
+      <h2 className="mb-2 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-400">
+        <Gauge className="h-4 w-4 text-brand-blue" strokeWidth={1.75} />
+        Calibração
+      </h2>
+      <Card className="space-y-3">
+        <p className="text-xs text-slate-500">
+          O quanto a sua sensação de saber bate com o que você acerta, nas{' '}
+          <strong className="text-navy">{dados.comConfianca}</strong>{' '}
+          {dados.comConfianca === 1 ? 'resposta' : 'respostas'} em que você declarou a certeza. Quem perde vaga em
+          concurso disputado raramente erra o que sabe que não sabe — erra o que achava que sabia.
+        </p>
+
+        <div className="space-y-1.5">
+          {dados.faixas
+            .filter((f) => f.total > 0)
+            .map((f) => {
+              // A referência muda por faixa: 90% é o esperado de quem diz ter
+              // certeza, e seria uma meta absurda para quem declarou chute.
+              const bom = f.grau === 'certeza' ? f.pct >= CERTEZA_ESPERADA : f.grau === 'duvida' ? f.pct >= 60 : true
+              const cor = f.grau === 'chute' ? 'bg-slate-400' : bom ? 'bg-emerald-500' : 'bg-rose-500'
+              return (
+                <div key={f.grau} className="py-1">
+                  <div className="mb-1 flex items-center justify-between gap-2 text-sm">
+                    <span className="truncate font-medium text-slate-700">{f.rotulo}</span>
+                    <span className="shrink-0 text-slate-400">
+                      {f.acertos}/{f.total} ({f.pct}%)
+                    </span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div className={`h-full rounded-full ${cor}`} style={{ width: `${f.pct}%` }} />
+                  </div>
+                </div>
+              )
+            })}
+        </div>
+
+        <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-100 pt-3 text-xs">
+          {dados.pctSemSorte !== null && (
+            <span className="text-slate-500">
+              Aproveitamento sem a sorte: <strong className="text-navy">{dados.pctSemSorte}%</strong>
+            </span>
+          )}
+          {dados.acertosChutados > 0 && (
+            <span className="text-slate-500">
+              Acertos chutados: <strong className="text-navy">{dados.acertosChutados}</strong>
+            </span>
+          )}
+          {dados.errosComCerteza > 0 && (
+            <span className="text-rose-600">
+              Errou com certeza: <strong>{dados.errosComCerteza}</strong>
+            </span>
+          )}
+        </div>
+
+        {dados.recado && (
+          <p
+            className={`rounded-lg p-3 text-xs ${
+              dados.recado.tom === 'alerta'
+                ? 'bg-rose-50 text-rose-700'
+                : dados.recado.tom === 'bom'
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'bg-slate-50 text-slate-600'
+            }`}
+          >
+            {dados.recado.texto}
+          </p>
+        )}
+      </Card>
+    </section>
   )
 }
 
@@ -183,6 +269,8 @@ export default function Desempenho() {
           de aproveitamento geral · {totalAcertos}/{respostas.length} questões
         </p>
       </Card>
+
+      <PainelCalibracao respostas={respostas} />
 
       {/* O extrato só aparece quando tem o que dizer. Uma caixa vazia com o
           título "o que mudou" seria pior que nenhuma caixa. */}

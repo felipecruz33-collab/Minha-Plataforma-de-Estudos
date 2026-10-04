@@ -1,4 +1,4 @@
-import { Brain, CalendarClock, CheckCircle2, XCircle } from 'lucide-react'
+import { AlertTriangle, Brain, CalendarClock, CheckCircle2, Dices, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { ControleDaRevisao } from '../components/ControleDaRevisao'
 import { QuestionCard } from '../components/QuestionCard'
@@ -11,7 +11,7 @@ import { useFiltroMateriaAula } from '../lib/hooks/useFiltroMateriaAula'
 import { useListaVisivel } from '../lib/hooks/useListaVisivel'
 import { useTodasQuestoes } from '../lib/hooks/useTodasQuestoes'
 import { repo } from '../lib/repo'
-import { estadosDeRevisao, textoDoPrazo, type EstadoRevisao } from '../lib/revisaoEspacada'
+import { estadosDeRevisao, textoDoPrazo, vencidasPrimeiro, type EstadoRevisao } from '../lib/revisaoEspacada'
 import type { Resposta } from '../lib/types'
 
 const selectCls = 'min-w-0 max-w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm outline-none focus:border-brand-blue'
@@ -28,6 +28,21 @@ function Prazo({ estado }: { estado: EstadoRevisao }) {
       {estado.acertosSeguidos > 0 && (
         <span className="text-slate-400">
           · {estado.acertosSeguidos} {estado.acertosSeguidos === 1 ? 'acerto seguido' : 'acertos seguidos'}
+        </span>
+      )}
+      {estado.erroComCerteza && (
+        <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 font-semibold text-rose-700">
+          <AlertTriangle className="h-3 w-3 shrink-0" strokeWidth={2.5} />
+          errou com certeza — prioridade
+        </span>
+      )}
+      {estado.acertosChutados > 0 && (
+        <span
+          className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-slate-500"
+          title="Acerto marcado como chute não aumenta o prazo: sorte não é memória."
+        >
+          <Dices className="h-3 w-3 shrink-0" strokeWidth={2} />
+          {estado.acertosChutados} {estado.acertosChutados === 1 ? 'acerto chutado' : 'acertos chutados'}
         </span>
       )}
       {estado.acertosNoMesmoDia > 0 && (
@@ -106,9 +121,10 @@ export default function Erradas() {
    */
   const paraHoje = useMemo(
     () =>
-      Array.from(estados.values())
-        .filter((e) => e.vencida)
-        .sort((a, b) => a.diasAteVoltar - b.diasAteVoltar)
+      // A ordem sai de `vencidasPrimeiro`: erro cometido COM CERTEZA no topo,
+      // depois o mais atrasado. Numa fila que a pessoa talvez não termine
+      // hoje, a ordem é metade do valor da fila.
+      vencidasPrimeiro(estados)
         .map((e) => questaoPorId.get(e.questaoId))
         .filter((q): q is NonNullable<typeof q> => !!q),
     [estados, questaoPorId],

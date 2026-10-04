@@ -1,9 +1,11 @@
 import { ChevronDown, ChevronRight, EyeOff, Star, Trash2 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useAuth } from '../lib/auth/AuthContext'
+import { useModoConfianca } from '../lib/hooks/useModoConfianca'
 import { repo } from '../lib/repo'
-import type { Questao, Resposta } from '../lib/types'
+import type { Confianca, Questao, Resposta } from '../lib/types'
 import { Card } from './ui/Card'
+import { EscalaConfianca, rotuloConfianca } from './ui/EscalaConfianca'
 import { TextoComTabelas } from './ui/TextoComTabelas'
 
 interface QuestionCardProps {
@@ -40,9 +42,11 @@ interface QuestionCardProps {
    * Serve pra quem quer fazer uma sequência sem ser influenciado: ver o
    * gabarito da questão 1 muda a forma de ler a questão 2.
    */
-  onMarcarRascunho?: (alternativaId: string) => void
+  onMarcarRascunho?: (alternativaId: string, confianca?: Confianca | null) => void
   /** A alternativa marcada em rascunho, se houver. */
   rascunho?: string | null
+  /** A confiança marcada em rascunho, quando o modo confiança está ligado. */
+  rascunhoConfianca?: Confianca | null
   /**
    * Carimbo da tela, ao lado da estrela — hoje é o de origem da matéria.
    *
@@ -63,9 +67,13 @@ export function QuestionCard({
   onRespondida,
   onMarcarRascunho,
   rascunho = null,
+  rascunhoConfianca = null,
   selo,
 }: QuestionCardProps) {
   const { user, perfil, toggleFavorito } = useAuth()
+  const modoConfianca = useModoConfianca(user?.id)
+  /** A certeza declarada nesta resposta — só existe com o modo ligado. */
+  const [confianca, setConfianca] = useState<Confianca | null>(respostaAnterior?.confianca ?? null)
   const [escolha, setEscolha] = useState<string | null>(respostaAnterior?.alternativaEscolhida ?? null)
   const [respondida, setRespondida] = useState(!!respostaAnterior)
   const [verOutras, setVerOutras] = useState(false)
@@ -78,6 +86,7 @@ export function QuestionCard({
   useEffect(() => {
     setEscolha(respostaAnterior?.alternativaEscolhida ?? null)
     setRespondida(!!respostaAnterior)
+    setConfianca(respostaAnterior?.confianca ?? null)
   }, [respostaAnterior?.id])
 
   const favorita = perfil?.favoritos.includes(questao.id) ?? false
@@ -93,7 +102,17 @@ export function QuestionCard({
    */
   const emRascunho = !!onMarcarRascunho && !respostaAnterior && !respondida
   const escolhaAtual = emRascunho ? rascunho : escolha
-  const marcada = emRascunho ? !!rascunho : respondida
+  /**
+   * Marcou a alternativa e ainda falta dizer a certeza.
+   *
+   * Enquanto está aqui NADA foi gravado e a alternativa pode ser trocada: a
+   * tentativa nasce no momento em que a pessoa se compromete — e com o modo
+   * ligado o compromisso inclui dizer o quanto ela acha que sabe. Declarar a
+   * certeza DEPOIS de ver o gabarito não valeria nada; a honestidade só existe
+   * antes.
+   */
+  const aguardandoConfianca = modoConfianca.ativo && !emRascunho && !respondida && !!escolha
+  const marcada = emRascunho ? !!rascunho : respondida || aguardandoConfianca
   /** Marcada é uma coisa; MOSTRAR o resultado é outra. */
   const mostrarResultado = !emRascunho && respondida
   const acertou = escolha === questao.gabarito
@@ -107,10 +126,26 @@ export function QuestionCard({
    */
   const outrasComentadas = questao.alternativas.filter((a) => a.id !== escolha && !!questao.altExp[a.id])
 
-  async function responder(altId: string) {
+  /**
+   * Clique na alternativa.
+   *
+   * Com o modo confiança ligado isto NÃO grava: só marca, e a escala aparece
+   * logo abaixo. Sem o modo, grava na hora, como sempre.
+   */
+  function marcar(altId: string) {
+    if (respondida || !user) return
+    if (modoConfianca.ativo) {
+      setEscolha(altId)
+      return
+    }
+    void gravar(altId, null)
+  }
+
+  async function gravar(altId: string, certeza: Confianca | null) {
     if (respondida || !user) return
     const correta = altId === questao.gabarito
     setEscolha(altId)
+    setConfianca(certeza)
     setRespondida(true)
     // Avisar o pai ANTES de gravar, e não depois, não é detalhe de estilo: é o
     // que faz a correção adiada funcionar. É este aviso que põe a questão na
@@ -128,6 +163,7 @@ export function QuestionCard({
       materiaId: questao.materiaId,
       alternativaEscolhida: altId,
       correta,
+      confianca: certeza,
     })
   }
 
@@ -189,7 +225,7 @@ export function QuestionCard({
               key={alt.id}
               type="button"
               disabled={!emRascunho && respondida}
-              onClick={() => (emRascunho ? onMarcarRascunho?.(alt.id) : responder(alt.id))}
+              onClick={() => (emRascunho ? onMarcarRascunho?.(alt.id, rascunhoConfianca) : marcar(alt.id))}
               className={`flex w-full items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors disabled:cursor-default ${classes}`}
             >
               <span className="font-bold text-navy">{alt.id}</span>
@@ -198,6 +234,24 @@ export function QuestionCard({
           )
         })}
       </div>
+
+      {/* A escala de certeza. Aparece entre a marcação e a correção — nunca
+          depois do gabarito, que é quando ela deixaria de medir qualquer
+          coisa. */}
+      {aguardandoConfianca && (
+        <EscalaConfianca
+          onEscolher={(c) => void gravar(escolha as string, c)}
+          ajuda="Responda honestamente: é isto que impede um chute certo de virar prazo longo, e põe o que você errou achando que sabia na frente da fila."
+        />
+      )}
+
+      {emRascunho && modoConfianca.ativo && rascunho && (
+        <EscalaConfianca
+          valor={rascunhoConfianca}
+          onEscolher={(c) => onMarcarRascunho?.(rascunho, c)}
+          titulo="O quanto você tem certeza? (dá pra trocar)"
+        />
+      )}
 
       {emRascunho && rascunho && (
         // Sem dizer QUAL alternativa foi marcada. A letra aqui era informação
@@ -219,6 +273,28 @@ export function QuestionCard({
           <p className={acertou ? 'font-semibold text-emerald-700' : 'font-semibold text-rose-700'}>
             {acertou ? 'Você acertou!' : `Gabarito: ${questao.gabarito}`}
           </p>
+          {confianca && (
+            // O cruzamento é a informação: acertar chutando e errar com
+            // certeza são os dois casos que a pessoa precisa VER para mudar
+            // algo no estudo.
+            <p className="text-xs font-medium">
+              {acertou && confianca === 'chute' && (
+                <span className="text-slate-500">
+                  Você marcou <strong>Chutei</strong> — este acerto não aumenta o prazo de revisão da questão. Sorte não
+                  é memória, e ela volta logo.
+                </span>
+              )}
+              {!acertou && confianca === 'certeza' && (
+                <span className="text-rose-600">
+                  Você errou com <strong>certeza</strong> — é o erro que mais rende corrigir, e ele vai para a frente da
+                  sua fila. Leia o comentário inteiro agora.
+                </span>
+              )}
+              {!(acertou && confianca === 'chute') && !(!acertou && confianca === 'certeza') && (
+                <span className="text-slate-400">Você marcou: {rotuloConfianca(confianca)}.</span>
+              )}
+            </p>
+          )}
           {/* O comentário do gabarito também comenta tabela — quando a
               questão traz uma, a explicação costuma repetir os números. */}
           {questao.explicacao && <TextoComTabelas texto={questao.explicacao} className="text-slate-600" />}
