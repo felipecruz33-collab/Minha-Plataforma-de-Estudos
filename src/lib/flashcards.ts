@@ -246,6 +246,63 @@ export function proximoEstado(atual: EstadoCartao | null, questaoId: string, not
  * emprego consegue sustentar num dia ruim, que é o dia que decide se o hábito
  * sobrevive.
  */
+/**
+ * Sessões com acerto para o cartão ser considerado APRENDIDO.
+ *
+ * Três, e o número não é redondo por acaso: é o critério do "successive
+ * relearning" de Rawson e Dunlosky — recuperar o item corretamente uma vez em
+ * cada de três sessões ESPAÇADAS. Nos estudos deles, itens levados a esse
+ * critério foram lembrados em mais de 60% contra menos de 20% do que os
+ * alunos estudaram por conta própria, e três sessões de relearning já
+ * bastaram para o ganho máximo em boa parte dos prazos testados.
+ *
+ * Para que serve aqui: dizer À PESSOA QUANDO PARAR. Sem um critério, um
+ * baralho é uma obrigação sem fim — o cartão só vai ficando com prazo maior, e
+ * a sensação é de que nada nunca termina. Com o critério, o cartão vira
+ * "aprendido", o assunto vira "dominado" quando todos os dele chegaram lá, e
+ * ele deixa de competir pela cota de cartões novos do dia.
+ *
+ * Aprendido NÃO é aposentado: ele continua voltando no prazo do SM-2, porque
+ * concurso é longo e o que não volta é esquecido. O que muda é o que a tela
+ * diz e o que ela cobra.
+ */
+export const SESSOES_PARA_APRENDER = 3
+
+/** O cartão já foi recuperado certo em `SESSOES_PARA_APRENDER` sessões distintas. */
+export function cartaoAprendido(estado: EstadoCartao | undefined | null): boolean {
+  return !!estado && estado.repeticoes >= SESSOES_PARA_APRENDER
+}
+
+export interface ProgressoAssunto {
+  /** Cartões que chegaram ao critério. */
+  aprendidos: number
+  total: number
+  /** Cartões que a pessoa ainda não viu nenhuma vez. */
+  novos: number
+  /** Todos os cartões do assunto chegaram ao critério. */
+  dominado: boolean
+}
+
+/**
+ * Quanto do assunto já está aprendido — o que a tela precisa para mostrar
+ * progresso em vez de uma fila sem fim.
+ */
+export function progressoDoAssunto(assunto: AssuntoFraco, estados: Map<string, EstadoCartao>): ProgressoAssunto {
+  let aprendidos = 0
+  let novos = 0
+  for (const id of assunto.questaoIds) {
+    const estado = estados.get(id)
+    if (!estado) novos += 1
+    else if (cartaoAprendido(estado)) aprendidos += 1
+  }
+  return {
+    aprendidos,
+    total: assunto.questaoIds.length,
+    novos,
+    dominado: assunto.questaoIds.length > 0 && aprendidos === assunto.questaoIds.length,
+  }
+}
+
 export const NOVOS_POR_DIA_PADRAO = 8
 
 /** Teto de revisões por dia, para um acúmulo não virar um muro. */
@@ -274,6 +331,11 @@ export function montarFila(
 
   const candidatos: string[] = []
   for (const assunto of assuntos) for (const id of assunto.questaoIds) candidatos.push(id)
+  // Assunto dominado não tem cartão novo para dar — todos os dele já têm
+  // estado —, então ele sai da disputa pela cota do dia sozinho. E a ordem de
+  // `assuntos` (pior aproveitamento primeiro, erro com certeza na frente
+  // dentro de cada um) já é a ordem em que a cota rende mais, então `novos`
+  // nasce ordenado e não precisa de nada aqui.
 
   const vencidos: EstadoCartao[] = []
   const novos: string[] = []

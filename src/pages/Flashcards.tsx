@@ -1,4 +1,4 @@
-import { Brain, Check, ChevronDown, ChevronRight, Clock, Eye, Layers, PartyPopper, Shuffle, Target } from 'lucide-react'
+import { Brain, Check, ChevronDown, ChevronRight, Clock, Eye, GraduationCap, Layers, PartyPopper, Shuffle, Target } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
@@ -8,7 +8,10 @@ import { TextoComTabelas } from '../components/ui/TextoComTabelas'
 import { useAuth } from '../lib/auth/AuthContext'
 import {
   assuntosFracos,
+  cartaoAprendido,
   ERROS_PARA_VIRAR_BARALHO,
+  progressoDoAssunto,
+  SESSOES_PARA_APRENDER,
   montarFila,
   NOVOS_POR_DIA_PADRAO,
   proximoEstado,
@@ -235,7 +238,8 @@ export default function Flashcards() {
         <p className="font-semibold text-navy">Sessão concluída</p>
         <p className="max-w-sm text-sm text-slate-400">
           {feitosAgora} {feitosAgora === 1 ? 'cartão revisado' : 'cartões revisados'}. Cada um já tem data para
-          voltar — não precisa adiantar nada hoje.
+          voltar — não precisa adiantar nada hoje. Adiantar, aqui, rende menos: o que fortalece a memória é o
+          intervalo entre as recuperações, não a quantidade delas numa sessão só.
         </p>
         <Button onClick={() => setEmEstudo(null)}>Voltar</Button>
       </Card>
@@ -317,14 +321,24 @@ export default function Flashcards() {
       </Card>
 
       <div>
-        <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">
+        <h2 className="mb-1 text-sm font-bold uppercase tracking-wide text-slate-400">
           Assuntos que você erra sempre
         </h2>
+        <p className="mb-2 text-xs text-slate-400">
+          Um cartão fica <strong className="text-emerald-700">aprendido</strong> quando você o acerta em{' '}
+          {SESSOES_PARA_APRENDER} sessões diferentes — o critério que Rawson e Dunlosky usaram nos estudos de
+          relearning, onde itens levados até ele foram lembrados em mais de 60% contra menos de 20% do estudo livre.
+          Aprendido continua voltando no prazo, mas para de disputar a sua cota de cartões novos.
+        </p>
         <div className="space-y-2">
           {assuntos.map((a) => {
             const aberto = assuntoAberto === a.tema
             const cartoes = a.questaoIds.map((id) => ({ id, questao: questaoPorId.get(id), estado: estados.get(id) }))
             const vistos = cartoes.filter((c) => c.estado).length
+            // O critério de parada: três acertos em sessões diferentes por
+            // cartão. Sem ele o baralho é uma obrigação sem fim, e obrigação
+            // sem fim é obrigação abandonada.
+            const progresso = progressoDoAssunto(a, estados)
             return (
               <div key={a.tema} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
                 <button
@@ -338,7 +352,18 @@ export default function Flashcards() {
                     <ChevronRight className="mt-0.5 h-5 w-5 shrink-0 text-slate-300" strokeWidth={2} />
                   )}
                   <span className="min-w-0 flex-1">
-                    <span className="block font-semibold text-navy">{a.tema}</span>
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-navy">{a.tema}</span>
+                      {progresso.dominado && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700"
+                          title={`Todos os cartões deste assunto foram acertados em ${SESSOES_PARA_APRENDER} sessões diferentes. Eles continuam voltando no prazo, mas o assunto já não disputa a sua cota de cartões novos.`}
+                        >
+                          <GraduationCap className="h-3 w-3 shrink-0" strokeWidth={2} />
+                          dominado
+                        </span>
+                      )}
+                    </span>
                     <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                       <span className="font-semibold text-rose-600">{a.erros} erros</span>
                       {a.errosComCerteza > 0 && (
@@ -353,8 +378,9 @@ export default function Flashcards() {
                       )}
                       <span className="text-slate-400">{a.pct}% de aproveitamento</span>
                       <span className="text-slate-400">
-                        {cartoes.length} {cartoes.length === 1 ? 'cartão' : 'cartões'}
-                        {vistos > 0 && ` · ${vistos} em andamento`}
+                        {progresso.aprendidos}/{progresso.total} aprendidos
+                        {vistos - progresso.aprendidos > 0 && ` · ${vistos - progresso.aprendidos} em andamento`}
+                        {progresso.novos > 0 && ` · ${progresso.novos} ainda não vistos`}
                       </span>
                     </span>
                   </span>
@@ -370,7 +396,12 @@ export default function Flashcards() {
                         <span className="shrink-0 text-[11px] text-slate-400">
                           {estado ? (
                             <span className="inline-flex items-center gap-1">
-                              <Check className="h-3 w-3 text-emerald-500" strokeWidth={2.5} />
+                              {cartaoAprendido(estado) ? (
+                                <GraduationCap className="h-3 w-3 text-emerald-600" strokeWidth={2} />
+                              ) : (
+                                <Check className="h-3 w-3 text-emerald-500" strokeWidth={2.5} />
+                              )}
+                              {cartaoAprendido(estado) && <span className="text-emerald-700">aprendido · </span>}
                               volta {textoDoIntervalo(estado.intervaloDias)}
                             </span>
                           ) : (

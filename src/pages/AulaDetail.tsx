@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ContentBlock } from '../components/ui/ContentBlock'
 import { CopyToPersonalDialog } from '../components/CopyToPersonalDialog'
+import { dispensouPreTeste, PreTesteDaAula } from '../components/PreTesteDaAula'
 import { EmptyState } from '../components/ui/EmptyState'
 import { Tabs } from '../components/ui/Tabs'
 import { QuestionCard } from '../components/QuestionCard'
@@ -16,13 +17,22 @@ import { TIPOS_COM_ABA, type Aula, type Materia } from '../lib/types'
 
 export default function AulaDetail() {
   const { aulaId } = useParams<{ aulaId: string }>()
-  const { perfil } = useAuth()
+  const { user, perfil } = useAuth()
   const podeVerBiblioteca = calcPodeVerBiblioteca(perfil)
   const [aula, setAula] = useState<Aula | null | undefined>(undefined)
   const [materia, setMateria] = useState<Materia | null>(null)
   const [aba, setAba] = useState('teoria')
   const [mostrarCopiar, setMostrarCopiar] = useState(false)
   const [copiada, setCopiada] = useState(false)
+  /**
+   * Se a pessoa já respondeu alguma questão DESTA aula.
+   *
+   * O pré-teste só faz sentido no primeiro contato: perguntar antes de ler
+   * sobre uma aula que a pessoa já estudou não é pré-teste, é revisão — e
+   * revisão ela já tem em três telas. `null` = ainda carregando, e nesse
+   * estado nada é oferecido (oferecer e sumir é pior do que não oferecer).
+   */
+  const [jaRespondeuAqui, setJaRespondeuAqui] = useState<boolean | null>(null)
 
   useEffect(() => {
     if (!aulaId) return
@@ -31,6 +41,18 @@ export default function AulaDetail() {
       if (a) setMateria(await repo.getMateria(a.materiaId))
     })
   }, [aulaId])
+
+  useEffect(() => {
+    if (!user || !aulaId) return
+    let cancelado = false
+    repo
+      .listRespostas(user.id)
+      .then((rs) => !cancelado && setJaRespondeuAqui(rs.some((r) => r.aulaId === aulaId)))
+      .catch(() => !cancelado && setJaRespondeuAqui(true))
+    return () => {
+      cancelado = true
+    }
+  }, [user, aulaId])
 
   const abasDisponiveis = useMemo(() => {
     if (!aula) return []
@@ -113,6 +135,14 @@ export default function AulaDetail() {
         <div className="mb-4 -mt-2">
           <Tabs tabs={abasDisponiveis} active={aba} onChange={setAba} variant="pill" />
         </div>
+      )}
+
+      {/* O pré-teste, antes de qualquer teoria: tentar e não saber transforma
+          a leitura seguinte em busca por uma resposta específica. Ver
+          `PreTesteDaAula` para a evidência e para por que nada aqui é
+          gravado. */}
+      {aba === 'teoria' && jaRespondeuAqui === false && !dispensouPreTeste(aula.id) && (
+        <PreTesteDaAula aula={aula} onIrParaTeoria={() => setAba('teoria')} />
       )}
 
       {aba === 'questoes' ? (

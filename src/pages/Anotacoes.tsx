@@ -40,6 +40,21 @@ interface Rascunho {
 
 const VAZIO: Rascunho = { materiaId: null, aulaId: null, titulo: '', corpo: '' }
 
+/**
+ * Perguntas que transformam transcrição em elaboração.
+ *
+ * Cada uma força uma operação diferente: explicar o porquê, distinguir do
+ * parecido (que é onde a banca mora), aterrar num exemplo, e ligar ao próprio
+ * histórico de erro. São curtas porque vão virar botão numa tela de celular.
+ */
+const GANCHOS = [
+  'Por que isso é verdade?',
+  'Como isso se diferencia de…',
+  'Exemplo concreto:',
+  'Como a banca tentaria me pegar aqui?',
+  'Onde isso já me pegou:',
+] as const
+
 const selectCls =
   'min-w-0 max-w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm outline-none focus:border-brand-blue'
 
@@ -364,13 +379,46 @@ export default function Anotacoes() {
           )}
         </div>
       ) : (
-        <textarea
-          value={rascunho.corpo}
-          onChange={(e) => setRascunho((r) => ({ ...r, corpo: e.target.value }))}
-          placeholder="Escreva aqui. As quebras de linha são preservadas, e uma tabela em linhas com barras vira tabela de verdade em “Visualizar”."
-          aria-label="Conteúdo da anotação"
-          className="min-h-[16rem] w-full resize-y rounded-lg border border-slate-300 p-3 text-sm leading-relaxed text-slate-800 outline-none focus:border-brand-blue"
-        />
+        <>
+          {/* GANCHOS DE ELABORAÇÃO.
+              Anotação de concurso costuma ser transcrição: a pessoa copia o
+              trecho da lei e sente que estudou. Dunlosky e colegas (2013), ao
+              classificar dez técnicas, põem resumir e sublinhar entre as de
+              BAIXA utilidade — e interrogação elaborativa ("por que isso é
+              verdade?") e auto-explicação entre as de utilidade MODERADA,
+              acima delas. A diferença é a pergunta: responder "por quê" obriga
+              a ligar o fato novo ao que você já sabe, e é essa ligação que
+              sobrevive até a prova.
+              São atalhos, não obrigação — quem quer só escrever, escreve. */}
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Ganchos</span>
+            {GANCHOS.map((g) => (
+              <button
+                key={g}
+                type="button"
+                onClick={() =>
+                  setRascunho((r) => ({
+                    ...r,
+                    // Em linha nova, e no fim: o gancho é uma pergunta para a
+                    // pessoa responder abaixo, não um título do que ela já
+                    // escreveu.
+                    corpo: `${r.corpo.replace(/\s*$/, '')}${r.corpo.trim() ? '\n\n' : ''}${g}\n`,
+                  }))
+                }
+                className="rounded-full border border-slate-300 px-2.5 py-1 text-[11px] font-medium text-slate-600 hover:border-brand-blue hover:text-brand-blue"
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={rascunho.corpo}
+            onChange={(e) => setRascunho((r) => ({ ...r, corpo: e.target.value }))}
+            placeholder="Escreva aqui. As quebras de linha são preservadas, e uma tabela em linhas com barras vira tabela de verdade em “Visualizar”."
+            aria-label="Conteúdo da anotação"
+            className="min-h-[16rem] w-full resize-y rounded-lg border border-slate-300 p-3 text-sm leading-relaxed text-slate-800 outline-none focus:border-brand-blue"
+          />
+        </>
       )}
 
       {abertaExistente && (

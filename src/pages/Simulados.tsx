@@ -11,6 +11,7 @@ import { useAuth } from '../lib/auth/AuthContext'
 import { contemTodasAsPalavras } from '../lib/buscarTexto'
 import { montarCadernoMensal, ROTULO_NIVEL, type CadernoMensal } from '../lib/cadernoMensal'
 import { agruparPorOrigem, GRUPO_BIBLIOTECA, GRUPO_MINHAS, nomesDuplicados } from '../lib/materiasPorOrigem'
+import { intercalarPorAssunto } from '../lib/intercalar'
 import { useListaVisivel } from '../lib/hooks/useListaVisivel'
 import { podeVerBiblioteca as calcPodeVerBiblioteca } from '../lib/premium'
 import { repo, type AulaComQuestoes, type MateriaComContagem } from '../lib/repo'
@@ -207,7 +208,10 @@ export default function Simulados() {
 
   /** As favoritas vão para o mesmo motor dos simulados, com o corte que a pessoa pediu. */
   function iniciarFavoritas() {
-    const escolhidas = embaralhar(favoritas).slice(0, limiteFavoritas)
+    const escolhidas = intercalarPorAssunto(
+      embaralhar(favoritas).slice(0, limiteFavoritas),
+      (q) => q.tema || '(sem assunto)',
+    )
     const porMateria = new Map<string, { materiaNome: string; quantidade: number }>()
     for (const q of escolhidas) {
       const nomeMateria = materias.find((m) => m.id === q.materiaId)?.nome ?? 'Matéria'
@@ -355,7 +359,14 @@ export default function Simulados() {
       materias: materiasEscolhidas,
       tempoLimiteSegundos: usarTempo ? tempoMinutos * 60 : null,
     })
-    setRodada(embaralhar(banco))
+    // Embaralhar já misturava as matérias, mas o sorteio pode muito bem
+    // colocar três questões do mesmo ASSUNTO em seguida — e é aí que o
+    // simulado deixa de treinar o que a prova cobra. Em bloco a pessoa aprende
+    // a resolver o exercício; alternando, ela aprende a identificar com que
+    // instituto está lidando antes de resolver (Brunmair e Richter, 2019,
+    // g = 0,42). Então: sorteia e depois garante que vizinhos sejam de
+    // assuntos diferentes.
+    setRodada(intercalarPorAssunto(embaralhar(banco), (q) => q.tema || '(sem assunto)'))
     setRespostasStatus({})
     setSalvo(false)
     const agoraMs = Date.now()
