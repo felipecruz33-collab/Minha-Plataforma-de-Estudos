@@ -53,8 +53,8 @@
   - `<h3 class="subtitulo-aula">` para tópicos
   - `<h4 class="miolo">` para subtópicos
 - **Tags HTML permitidas**: `p`, `h3`, `h4`, `ul`, `ol`, `li`, `strong`, `em`, `br`, `sub`, `sup`, `table`, `thead`, `tbody`, `tr`, `th`, `td`, `div`, `span`
-- **Tags NUNCA permitidas**: `script`, `style`, `iframe`, `link`, imagens externas, atributos de evento (onclick, etc)
-- **Alternativas**: cada `id` deve ser único (A-E); `gabarito` deve ser um desses ids; `altExp` precisa de uma chave para cada id
+- **Tags NUNCA permitidas**: `script`, `style`, `iframe`, `link`, `img`, `object`, `embed`, links `<a>`, qualquer atributo de evento (`onclick` e afins) e qualquer atributo `src`
+- **Alternativas**: cada `id` deve ser único e maiúsculo (A-E); `gabarito` deve ser um desses ids; `altExp` é obrigatório e deve ser um objeto — as chaves que existirem precisam apontar para alternativas que existem e ter texto não vazio. Cobrir TODAS as alternativas é exigência de qualidade do material (ver `PROMPT_CONVERSAO_JSON.md`), não do validador: o arquivo importa sem isso.
 - **Campos vazios**: `banca`, `ano`, `orgao` podem ser "" (vazio). NUNCA inventar dados.
 - **JSON válido**: aspas duplas, aspas internas escapadas, UTF-8
 
